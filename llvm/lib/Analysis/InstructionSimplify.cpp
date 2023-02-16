@@ -948,7 +948,7 @@ static Value *simplifyMulInst(Value *Op0, Value *Op1, bool IsNSW, bool IsNUW,
        match(Op1, m_Exact(m_IDiv(m_Value(X), m_Specific(Op0)))))) // Y * (X / Y)
     return X;
 
-   if (Op0->getType()->isIntOrIntVectorTy(1)) {
+  if (Op0->getType()->isIntOrIntVectorTy(1)) {
     // mul i1 nsw is a special-case because -1 * -1 is poison (+1 is not
     // representable). All other cases reduce to 0, so just return 0.
     if (IsNSW)
@@ -4416,7 +4416,8 @@ static Value *simplifySelectWithICmpCond(Value *CondVal, Value *TrueVal,
   if (!match(CondVal, m_ICmp(Pred, m_Value(CmpLHS), m_Value(CmpRHS))))
     return nullptr;
 
-  if (Value *V = simplifyCmpSelOfMaxMin(CmpLHS, CmpRHS, Pred, TrueVal, FalseVal))
+  if (Value *V =
+          simplifyCmpSelOfMaxMin(CmpLHS, CmpRHS, Pred, TrueVal, FalseVal))
     return V;
 
   // Canonicalize ne to eq predicate.
@@ -5745,7 +5746,7 @@ static Value *simplifyBinOp(unsigned Opcode, Value *LHS, Value *RHS,
     return simplifyAddInst(LHS, RHS, /* IsNSW */ false, /* IsNUW */ false, Q,
                            MaxRecurse);
   case Instruction::Sub:
-    return simplifySubInst(LHS, RHS,  /* IsNSW */ false, /* IsNUW */ false, Q,
+    return simplifySubInst(LHS, RHS, /* IsNSW */ false, /* IsNUW */ false, Q,
                            MaxRecurse);
   case Instruction::Mul:
     return simplifyMulInst(LHS, RHS, /* IsNSW */ false, /* IsNUW */ false, Q,
@@ -6571,6 +6572,17 @@ Value *llvm::simplifyFreezeInst(Value *Op0, const SimplifyQuery &Q) {
 
 static Value *simplifyLoadInst(LoadInst *LI, Value *PtrOp,
                                const SimplifyQuery &Q) {
+  LLVM_DEBUG(errs() << "in simplifyLoadInst\n");
+  LLVM_DEBUG(errs() << "LI is");
+  LLVM_DEBUG(LI->print(errs()));
+  LLVM_DEBUG(errs() << "\n");
+  LLVM_DEBUG(errs() << "PtrOp is ");
+  LLVM_DEBUG(PtrOp->print(errs()));
+  LLVM_DEBUG(errs() << "\n");
+  // auto *UOa = getUnderlyingObject(PtrOp);
+  // LLVM_DEBUG(errs() << "Underlying is \n");
+  // LLVM_DEBUG(UOa->print(errs()));
+  // LLVM_DEBUG(errs() << "\n");
   if (LI->isVolatile())
     return nullptr;
 
@@ -6579,7 +6591,13 @@ static Value *simplifyLoadInst(LoadInst *LI, Value *PtrOp,
   // Try to convert operand into a constant by stripping offsets while looking
   // through invariant.group intrinsics. Don't bother if the underlying object
   // is not constant, as calculating GEP offsets is expensive.
-  if (!PtrOpC && isa<Constant>(getUnderlyingObject(PtrOp))) {
+  if (!PtrOpC) {
+    if (auto *UC = dyn_cast<Constant>(getUnderlyingObject(PtrOp))) {
+      LLVM_DEBUG(errs() << "Underlying is constant\n");
+      // if underlying object is constant value then fold it
+      if (Constant *Res = ConstantFoldLoadFromUniformValue(UC, LI->getType()))
+        return Res;
+    }
     PtrOp = PtrOp->stripAndAccumulateConstantOffsets(
         Q.DL, Offset, /* AllowNonInbounts */ true,
         /* AllowInvariantGroup */ true);
@@ -6587,7 +6605,6 @@ static Value *simplifyLoadInst(LoadInst *LI, Value *PtrOp,
     Offset = Offset.sextOrTrunc(Q.DL.getIndexTypeSizeInBits(PtrOp->getType()));
     PtrOpC = dyn_cast<Constant>(PtrOp);
   }
-
   if (PtrOpC)
     return ConstantFoldLoadFromConstPtr(PtrOpC, LI->getType(), Offset, Q.DL);
   return nullptr;
