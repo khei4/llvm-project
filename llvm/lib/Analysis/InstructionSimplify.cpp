@@ -6585,7 +6585,9 @@ static Value *simplifyLoadInst(LoadInst *LI, Value *PtrOp,
   auto *GV = dyn_cast<GlobalVariable>(getUnderlyingObject(PtrOp));
   if (!GV || !GV->isConstant() || !GV->hasDefinitiveInitializer())
     return nullptr;
-
+  if (Constant *Res =
+          ConstantFoldLoadFromUniformValue(GV->getInitializer(), LI->getType()))
+    return Res;
   // Try to convert operand into a constant by stripping offsets while looking
   // through invariant.group intrinsics.
   APInt Offset(Q.DL.getIndexTypeSizeInBits(PtrOp->getType()), 0);
