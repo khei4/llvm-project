@@ -4,10 +4,18 @@
 @zeroinit = constant {} zeroinitializer
 @poison = constant {} poison
 
-@constzeroarray = internal constant [4 x i32] zeroinitializer
+%s = type {i32, i32, i32}
 
-@constarray = internal constant [4 x i32] [i32 1, i32 1, i32 1, i32 1]
-@constarrayi8 = internal constant [2 x i8] [i8 1, i8 1]
+@constzeroarray = internal constant [4 x i32] zeroinitializer
+@constzerostruct = internal constant %s zeroinitializer
+
+@constalleqarray = internal constant [4 x i32] [i32 1, i32 1, i32 1, i32 1]
+@constalleqarrayi8 = internal constant [2 x i8] [i8 1, i8 1]
+@constalleqstruct = internal constant %s {i32 1, i32 1, i32 1}
+
+@constarray = internal constant [4 x i32] [i32 1, i32 2, i32 3, i32 4]
+@constarrayi8 = internal constant [2 x i8] [i8 1, i8 2]
+@conststruct = internal constant %s {i32 1, i32 2, i32 3}
 
 define i32 @crash_on_zeroinit() {
 ; CHECK-LABEL: @crash_on_zeroinit(
@@ -65,6 +73,43 @@ define i8 @load_i8_multi_gep_const_zero_array(i64 %idx1, i64 %idx2) {
   ret i8 %load
 }
 
+define i32 @load_gep_const_zero_struct(i32 %idx) {
+; CHECK-LABEL: @load_gep_const_zero_struct(
+; CHECK-NEXT:    ret i32 0
+;
+  %gep = getelementptr inbounds %s, ptr @constzerostruct, i32 %idx
+  %load = load i32, ptr %gep
+  ret i32 %load
+}
+
+define i32 @load_gep_const_alleq_array(i64 %idx) {
+; CHECK-LABEL: @load_gep_const_alleq_array(
+; CHECK-NEXT:    ret i32 1
+;
+  %gep = getelementptr inbounds [4 x i32], ptr @constalleqarray, i64 0, i64 %idx
+  %load = load i32, ptr %gep
+  ret i32 %load
+}
+
+define i8 @load_i8_multi_gep_const_alleq_array(i64 %idx1, i64 %idx2) {
+; CHECK-LABEL: @load_i8_multi_gep_const_alleq_array(
+; CHECK-NEXT:    ret i8 1
+;
+  %gep1 = getelementptr inbounds i8, ptr @constalleqarrayi8, i64 %idx1
+  %gep = getelementptr inbounds i8, ptr %gep1, i64 %idx2
+  %load = load i8, ptr %gep
+  ret i8 %load
+}
+
+define i32 @load_gep_const_alleq_struct(i32 %idx) {
+; CHECK-LABEL: @load_gep_const_alleq_struct(
+; CHECK-NEXT:    ret i32 1
+;
+  %gep = getelementptr inbounds %s, ptr @constalleqstruct, i32 %idx
+  %load = load i32, ptr %gep
+  ret i32 %load
+}
+
 define i32 @load_gep_const_array(i64 %idx) {
 ; CHECK-LABEL: @load_gep_const_array(
 ; CHECK-NEXT:    [[GEP:%.*]] = getelementptr inbounds [4 x i32], ptr @constarray, i64 0, i64 [[IDX:%.*]]
@@ -87,4 +132,15 @@ define i8 @load_i8_multi_gep_const_array(i64 %idx1, i64 %idx2) {
   %gep = getelementptr inbounds i8, ptr %gep1, i64 %idx2
   %load = load i8, ptr %gep
   ret i8 %load
+}
+
+define i32 @load_gep_const_struct(i32 %idx) {
+; CHECK-LABEL: @load_gep_const_struct(
+; CHECK-NEXT:    [[GEP:%.*]] = getelementptr inbounds [[S:%.*]], ptr @conststruct, i32 [[IDX:%.*]]
+; CHECK-NEXT:    [[LOAD:%.*]] = load i32, ptr [[GEP]], align 4
+; CHECK-NEXT:    ret i32 [[LOAD]]
+;
+  %gep = getelementptr inbounds %s, ptr @conststruct, i32 %idx
+  %load = load i32, ptr %gep
+  ret i32 %load
 }
