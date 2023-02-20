@@ -767,6 +767,30 @@ Constant *llvm::ConstantFoldLoadFromUniformValue(Constant *C, Type *Ty) {
   return nullptr;
 }
 
+Constant *llvm::ConstantFoldLoadFromAllEqAggregate(Constant *C, Type *Ty) {
+  if (isa<ArrayType>(C->getType())) {
+    auto *ArTy = dyn_cast<ArrayType>(C->getType());
+    if (ArTy->getElementType() == Ty) {
+      uint64_t NumElm = ArTy->getNumElements();
+      if (NumElm) {
+        Constant *EC = C->getAggregateElement(0U);
+        for (unsigned I = 1; I != NumElm; ++I)
+          if (EC != C->getAggregateElement(I))
+            return nullptr;
+        return EC;
+      } else {
+        // TODO: return null value is safe?
+        return Constant::getNullValue(Ty);
+      }
+    }
+  }
+  if (isa<StructType>(C->getType())) {
+    // TODO:
+    return nullptr;
+  }
+  return nullptr;
+}
+
 namespace {
 
 /// One of Op0/Op1 is a constant expression.
