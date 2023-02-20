@@ -6599,15 +6599,20 @@ Value *llvm::simplifyLoadInst(LoadInst *LI, Value *PtrOp,
     return ConstantFoldLoadFromConstPtr(PtrOpC, LI->getType(), Q.DL);
 
   // We can only fold the load if it is from a constant global with definitive
-  // initializer. Skip expensive logic if this is not the case.
+  // or unique initializer. Skip expensive logic if this is not the case.
   auto *GV = dyn_cast<GlobalVariable>(getUnderlyingObject(PtrOp));
-  if (!GV || !GV->isConstant() || !GV->hasDefinitiveInitializer())
+  if (!GV || !GV->isConstant() ||
+      (!GV->hasDefinitiveInitializer() && !GV->hasUniqueInitializer()))
     return nullptr;
 
-  // If GlobalVariable's initializer is uniform, then return the constant
-  // regardless of its offset.
+  // If GlobalVariable's initializer is uniform or all elements of
+  // arrays/structs are equal, then return the constant regardless of its
+  // offset.
   if (Constant *C =
           ConstantFoldLoadFromUniformValue(GV->getInitializer(), LI->getType()))
+    return C;
+  if (Constant *C = ConstantFoldLoadFromAllEqAggregate(GV->getInitializer(),
+                                                       LI->getType()))
     return C;
 
   // Try to convert operand into a constant by stripping offsets while looking

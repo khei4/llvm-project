@@ -170,6 +170,10 @@ Constant *ConstantFoldLoadFromConstPtr(Constant *C, Type *Ty,
 /// represented, return null.
 Constant *ConstantFoldLoadFromUniformValue(Constant *C, Type *Ty);
 
+/// If C is a constant Aggregate, all elements have equal values and equal types
+/// to the load operand type, return first element.
+Constant *ConstantFoldLoadFromAllEqAggregate(Constant *C, Type *Ty);
+
 /// canConstantFoldCallTo - Return true if its even possible to fold a call to
 /// the specified function.
 bool canConstantFoldCallTo(const CallBase *Call, const Function *F);
