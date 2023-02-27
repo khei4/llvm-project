@@ -651,3 +651,261 @@ merge:
   %ret = phi i8 [ 1, %sw.1 ], [ 7, %sw.7 ], [ 19, %sw.19 ]
   ret i8 %ret
 }
+
+define i32 @switch_to_sext(i8 noundef %0) {
+; CHECK-LABEL: @switch_to_sext(
+; CHECK-NEXT:    switch i8 [[TMP0:%.*]], label [[BB2:%.*]] [
+; CHECK-NEXT:    i8 -1, label [[BB3:%.*]]
+; CHECK-NEXT:    i8 0, label [[BB4:%.*]]
+; CHECK-NEXT:    i8 1, label [[BB1:%.*]]
+; CHECK-NEXT:    ]
+; CHECK:       bb2:
+; CHECK-NEXT:    unreachable
+; CHECK:       bb3:
+; CHECK-NEXT:    br label [[BB5:%.*]]
+; CHECK:       bb4:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb5:
+; CHECK-NEXT:    [[DOT0:%.*]] = sext i8 [[TMP0]] to i32
+; CHECK-NEXT:    ret i32 [[DOT0]]
+;
+  switch i8 %0, label %bb2 [
+  i8 -1, label %bb3
+  i8 0, label %bb4
+  i8 1, label %bb1
+  ]
+
+bb2:                                              ; preds = %start
+  unreachable
+
+bb3:                                              ; preds = %start
+  br label %bb5
+
+bb4:                                              ; preds = %start
+  br label %bb5
+
+bb1:                                              ; preds = %start
+  br label %bb5
+
+bb5:                                              ; preds = %bb1, %bb4, %bb3
+  %.0 = phi i32 [ 1, %bb1 ], [ 0, %bb4 ], [ -1, %bb3 ]
+  ret i32 %.0
+}
+
+
+define i32 @switch_to_zext(i8 noundef %0) {
+; CHECK-LABEL: @switch_to_zext(
+; CHECK-NEXT:    switch i8 [[TMP0:%.*]], label [[BB2:%.*]] [
+; CHECK-NEXT:    i8 -1, label [[BB3:%.*]]
+; CHECK-NEXT:    i8 0, label [[BB4:%.*]]
+; CHECK-NEXT:    i8 1, label [[BB1:%.*]]
+; CHECK-NEXT:    ]
+; CHECK:       bb2:
+; CHECK-NEXT:    unreachable
+; CHECK:       bb3:
+; CHECK-NEXT:    br label [[BB5:%.*]]
+; CHECK:       bb4:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb5:
+; CHECK-NEXT:    [[DOT0:%.*]] = zext i8 [[TMP0]] to i32
+; CHECK-NEXT:    ret i32 [[DOT0]]
+;
+  switch i8 %0, label %bb2 [
+  i8 -1, label %bb3
+  i8 0, label %bb4
+  i8 1, label %bb1
+  ]
+
+bb2:                                              ; preds = %start
+  unreachable
+
+bb3:                                              ; preds = %start
+  br label %bb5
+
+bb4:                                              ; preds = %start
+  br label %bb5
+
+bb1:                                              ; preds = %start
+  br label %bb5
+
+bb5:                                              ; preds = %bb1, %bb4, %bb3
+  %.0 = phi i32 [ 1, %bb1 ], [ 0, %bb4 ], [ 255, %bb3 ]
+  ret i32 %.0
+}
+
+define i8 @switch_to_trunc(i32 noundef %0) {
+; CHECK-LABEL: @switch_to_trunc(
+; CHECK-NEXT:    switch i32 [[TMP0:%.*]], label [[BB2:%.*]] [
+; CHECK-NEXT:    i32 -1, label [[BB3:%.*]]
+; CHECK-NEXT:    i32 0, label [[BB4:%.*]]
+; CHECK-NEXT:    i32 1, label [[BB1:%.*]]
+; CHECK-NEXT:    ]
+; CHECK:       bb2:
+; CHECK-NEXT:    unreachable
+; CHECK:       bb3:
+; CHECK-NEXT:    br label [[BB5:%.*]]
+; CHECK:       bb4:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb5:
+; CHECK-NEXT:    [[DOT0:%.*]] = trunc i32 [[TMP0]] to i8
+; CHECK-NEXT:    ret i8 [[DOT0]]
+;
+  switch i32 %0, label %bb2 [
+  i32 -1, label %bb3
+  i32 0, label %bb4
+  i32 1, label %bb1
+  ]
+
+bb2:                                              ; preds = %start
+  unreachable
+
+bb3:                                              ; preds = %start
+  br label %bb5
+
+bb4:                                              ; preds = %start
+  br label %bb5
+
+bb1:                                              ; preds = %start
+  br label %bb5
+
+bb5:                                              ; preds = %bb1, %bb4, %bb3
+  %.0 = phi i8 [ 1, %bb1 ], [ 0, %bb4 ], [ -1, %bb3 ]
+  ret i8 %.0
+}
+
+
+define i32 @switch_to_sext_invert(i8 noundef %0) {
+; CHECK-LABEL: @switch_to_sext_invert(
+; CHECK-NEXT:    switch i8 [[TMP0:%.*]], label [[BB2:%.*]] [
+; CHECK-NEXT:    i8 -1, label [[BB3:%.*]]
+; CHECK-NEXT:    i8 0, label [[BB4:%.*]]
+; CHECK-NEXT:    i8 1, label [[BB1:%.*]]
+; CHECK-NEXT:    ]
+; CHECK:       bb2:
+; CHECK-NEXT:    unreachable
+; CHECK:       bb3:
+; CHECK-NEXT:    br label [[BB5:%.*]]
+; CHECK:       bb4:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb5:
+; CHECK-NEXT:    [[TMP2:%.*]] = xor i8 [[TMP0]], -1
+; CHECK-NEXT:    [[DOT0:%.*]] = sext i8 [[TMP2]] to i32
+; CHECK-NEXT:    ret i32 [[DOT0]]
+;
+  switch i8 %0, label %bb2 [
+  i8 -1, label %bb3
+  i8 0, label %bb4
+  i8 1, label %bb1
+  ]
+
+bb2:                                              ; preds = %start
+  unreachable
+
+bb3:                                              ; preds = %start
+  br label %bb5
+
+bb4:                                              ; preds = %start
+  br label %bb5
+
+bb1:                                              ; preds = %start
+  br label %bb5
+
+bb5:                                              ; preds = %bb1, %bb4, %bb3
+  %.0 = phi i32 [ -2, %bb1 ], [ -1, %bb4 ], [ 0, %bb3 ]
+  ret i32 %.0
+}
+
+
+define i32 @switch_to_zext_invert(i8 noundef %0) {
+; CHECK-LABEL: @switch_to_zext_invert(
+; CHECK-NEXT:    switch i8 [[TMP0:%.*]], label [[BB2:%.*]] [
+; CHECK-NEXT:    i8 -1, label [[BB3:%.*]]
+; CHECK-NEXT:    i8 0, label [[BB4:%.*]]
+; CHECK-NEXT:    i8 1, label [[BB1:%.*]]
+; CHECK-NEXT:    ]
+; CHECK:       bb2:
+; CHECK-NEXT:    unreachable
+; CHECK:       bb3:
+; CHECK-NEXT:    br label [[BB5:%.*]]
+; CHECK:       bb4:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb5:
+; CHECK-NEXT:    [[TMP2:%.*]] = zext i8 [[TMP0]] to i32
+; CHECK-NEXT:    [[DOT0:%.*]] = xor i32 [[TMP2]], -1
+; CHECK-NEXT:    ret i32 [[DOT0]]
+;
+  switch i8 %0, label %bb2 [
+  i8 -1, label %bb3
+  i8 0, label %bb4
+  i8 1, label %bb1
+  ]
+
+bb2:                                              ; preds = %start
+  unreachable
+
+bb3:                                              ; preds = %start
+  br label %bb5
+
+bb4:                                              ; preds = %start
+  br label %bb5
+
+bb1:                                              ; preds = %start
+  br label %bb5
+
+bb5:                                              ; preds = %bb1, %bb4, %bb3
+  %.0 = phi i32 [ -2, %bb1 ], [ -1, %bb4 ], [ -256, %bb3 ]
+  ret i32 %.0
+}
+
+define i8 @switch_to_trunc_invert(i32 noundef %0) {
+; CHECK-LABEL: @switch_to_trunc_invert(
+; CHECK-NEXT:    switch i32 [[TMP0:%.*]], label [[BB2:%.*]] [
+; CHECK-NEXT:    i32 -1, label [[BB3:%.*]]
+; CHECK-NEXT:    i32 0, label [[BB4:%.*]]
+; CHECK-NEXT:    i32 1, label [[BB1:%.*]]
+; CHECK-NEXT:    ]
+; CHECK:       bb2:
+; CHECK-NEXT:    unreachable
+; CHECK:       bb3:
+; CHECK-NEXT:    br label [[BB5:%.*]]
+; CHECK:       bb4:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb1:
+; CHECK-NEXT:    br label [[BB5]]
+; CHECK:       bb5:
+; CHECK-NEXT:    [[TMP2:%.*]] = trunc i32 [[TMP0]] to i8
+; CHECK-NEXT:    [[DOT0:%.*]] = xor i8 [[TMP2]], -1
+; CHECK-NEXT:    ret i8 [[DOT0]]
+;
+  switch i32 %0, label %bb2 [
+  i32 -1, label %bb3
+  i32 0, label %bb4
+  i32 1, label %bb1
+  ]
+
+bb2:                                              ; preds = %start
+  unreachable
+
+bb3:                                              ; preds = %start
+  br label %bb5
+
+bb4:                                              ; preds = %start
+  br label %bb5
+
+bb1:                                              ; preds = %start
+  br label %bb5
+
+bb5:                                              ; preds = %bb1, %bb4, %bb3
+  %.0 = phi i8 [ -2, %bb1 ], [ -1, %bb4 ], [ 0, %bb3 ]
+  ret i8 %.0
+}

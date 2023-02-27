@@ -1294,6 +1294,7 @@ static Value *simplifyUsingControlFlow(InstCombiner &Self, PHINode &PN,
   if (!all_of(PN.operands(), [](Value *V) { return isa<ConstantInt>(V); }))
     return nullptr;
 
+  unsigned PNSize = PN.getType()->getPrimitiveSizeInBits();
   BasicBlock *BB = PN.getParent();
   // Do not bother with unreachable instructions.
   if (!DT.isReachableFromEntry(BB))
@@ -1303,10 +1304,22 @@ static Value *simplifyUsingControlFlow(InstCombiner &Self, PHINode &PN,
   LLVMContext &Context = PN.getContext();
   auto *IDom = DT.getNode(BB)->getIDom()->getBlock();
   Value *Cond;
-  SmallDenseMap<ConstantInt *, BasicBlock *, 8> SuccForValue;
+  SmallDenseMap<ConstantInt *, BasicBlock *, 8> SuccValue, SuccValueTrunc,
+      SuccValueZExt, SuccValueSExt;
   SmallDenseMap<BasicBlock *, unsigned, 8> SuccCount;
-  auto AddSucc = [&](ConstantInt *C, BasicBlock *Succ) {
-    SuccForValue[C] = Succ;
+  auto AddSucc = [&](Value *Cond, ConstantInt *C, BasicBlock *Succ) {
+    unsigned CondSize = Cond->getType()->getPrimitiveSizeInBits();
+    if (CondSize < PNSize) {
+      SuccValueSExt[cast<ConstantInt>(ConstantExpr::getSExt(C, PN.getType()))] =
+          Succ;
+      SuccValueZExt[cast<ConstantInt>(ConstantExpr::getZExt(C, PN.getType()))] =
+          Succ;
+    } else if (CondSize == PNSize) {
+      SuccValue[C] = Succ;
+    } else {
+      SuccValueTrunc[cast<ConstantInt>(
+          ConstantExpr::getTrunc(C, PN.getType()))] = Succ;
+    }
     ++SuccCount[Succ];
   };
   if (auto *BI = dyn_cast<BranchInst>(IDom->getTerminator())) {
@@ -1314,62 +1327,83 @@ static Value *simplifyUsingControlFlow(InstCombiner &Self, PHINode &PN,
       return nullptr;
 
     Cond = BI->getCondition();
-    AddSucc(ConstantInt::getTrue(Context), BI->getSuccessor(0));
-    AddSucc(ConstantInt::getFalse(Context), BI->getSuccessor(1));
+    AddSucc(Cond, ConstantInt::getTrue(Context), BI->getSuccessor(0));
+    AddSucc(Cond, ConstantInt::getFalse(Context), BI->getSuccessor(1));
   } else if (auto *SI = dyn_cast<SwitchInst>(IDom->getTerminator())) {
     Cond = SI->getCondition();
     ++SuccCount[SI->getDefaultDest()];
     for (auto Case : SI->cases())
-      AddSucc(Case.getCaseValue(), Case.getCaseSuccessor());
+      AddSucc(Cond, Case.getCaseValue(), Case.getCaseSuccessor());
   } else {
     return nullptr;
   }
 
-  if (Cond->getType() != PN.getType())
-    return nullptr;
-
   // Check that edges outgoing from the idom's terminators dominate respective
   // inputs of the Phi.
-  std::optional<bool> Invert;
-  for (auto Pair : zip(PN.incoming_values(), PN.blocks())) {
-    auto *Input = cast<ConstantInt>(std::get<0>(Pair));
-    BasicBlock *Pred = std::get<1>(Pair);
-    auto IsCorrectInput = [&](ConstantInt *Input) {
-      // The input needs to be dominated by the corresponding edge of the idom.
-      // This edge cannot be a multi-edge, as that would imply that multiple
-      // different condition values follow the same edge.
-      auto It = SuccForValue.find(Input);
-      return It != SuccForValue.end() && SuccCount[It->second] == 1 &&
-             DT.dominates(BasicBlockEdge(IDom, It->second),
-                          BasicBlockEdge(Pred, BB));
-    };
+  auto CheckSuccValue =
+      [&](SmallDenseMap<ConstantInt *, BasicBlock *, 8> SuccForValue)
+      -> std::tuple<bool, std::optional<bool>> {
+    std::optional<bool> Invert;
+    for (auto Pair : zip(PN.incoming_values(), PN.blocks())) {
+      auto *Input = cast<ConstantInt>(std::get<0>(Pair));
+      BasicBlock *Pred = std::get<1>(Pair);
+      auto IsCorrectInput = [&](ConstantInt *Input) {
+        // The input needs to be dominated by the corresponding edge of the
+        // idom. This edge cannot be a multi-edge, as that would imply that
+        // multiple different condition values follow the same edge.
+        auto It = SuccForValue.find(Input);
+        return It != SuccForValue.end() && SuccCount[It->second] == 1 &&
+               DT.dominates(BasicBlockEdge(IDom, It->second),
+                            BasicBlockEdge(Pred, BB));
+      };
 
-    // Depending on the constant, the condition may need to be inverted.
-    bool NeedsInvert;
-    if (IsCorrectInput(Input))
-      NeedsInvert = false;
-    else if (IsCorrectInput(cast<ConstantInt>(ConstantExpr::getNot(Input))))
-      NeedsInvert = true;
-    else
-      return nullptr;
+      // Depending on the constant, the condition may need to be inverted.
+      bool NeedsInvert;
+      if (IsCorrectInput(Input))
+        NeedsInvert = false;
+      else if (IsCorrectInput(cast<ConstantInt>(ConstantExpr::getNot(Input))))
+        NeedsInvert = true;
+      else
+        return {false, std::nullopt};
 
-    // Make sure the inversion requirement is always the same.
-    if (Invert && *Invert != NeedsInvert)
-      return nullptr;
+      // Make sure the inversion requirement is always the same.
+      if (Invert && *Invert != NeedsInvert)
+        return {false, std::nullopt};
 
-    Invert = NeedsInvert;
-  }
+      Invert = NeedsInvert;
+    }
+    return {true, Invert};
+  };
 
-  if (!*Invert)
-    return Cond;
-
-  // This Phi is actually opposite to branching condition of IDom. We invert
-  // the condition that will potentially open up some opportunities for
-  // sinking.
+  unsigned CondSize = Cond->getType()->getPrimitiveSizeInBits();
+  // This Phi is actually opposite to branching condition of IDom after
+  // zext/sext/trunc. We invert the condition that will potentially open up some
+  // opportunities for sinking.
   auto InsertPt = BB->getFirstInsertionPt();
   if (InsertPt != BB->end()) {
     Self.Builder.SetInsertPoint(&*InsertPt);
-    return Self.Builder.CreateNot(Cond);
+    if (CondSize < PNSize) {
+      auto [ZExtOk, ZExtInvert] = CheckSuccValue(SuccValueZExt);
+      if (ZExtOk) {
+        Cond = Self.Builder.CreateZExt(Cond, PN.getType());
+        return *ZExtInvert ? Self.Builder.CreateNot(Cond) : Cond;
+      }
+      auto [SExtOk, SExtInvert] = CheckSuccValue(SuccValueSExt);
+      if (SExtOk) {
+        Cond = Self.Builder.CreateSExt(Cond, PN.getType());
+        return *SExtInvert ? Self.Builder.CreateNot(Cond) : Cond;
+      }
+    } else if (CondSize == PNSize) {
+      auto [Ok, Invert] = CheckSuccValue(SuccValue);
+      if (Ok)
+        return *Invert ? Self.Builder.CreateNot(Cond) : Cond;
+    } else {
+      auto [Ok, Invert] = CheckSuccValue(SuccValueTrunc);
+      if (Ok) {
+        Cond = Self.Builder.CreateTrunc(Cond, PN.getType());
+        return *Invert ? Self.Builder.CreateNot(Cond) : Cond;
+      }
+    }
   }
 
   return nullptr;
