@@ -18,6 +18,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -824,6 +825,103 @@ static bool foldConsecutiveLoads(Instruction &I, const DataLayout &DL,
   return true;
 }
 
+// Return a minimum gep stride, greatest common divisor of consective gep
+// indices type sizes (c.f. Bézout's identity). Currently ignore the indices
+// constantness and struct type.
+uint64_t GetMinimumGEPStride(Value *PtrOp, const DataLayout DL) {
+
+  uint64_t g;
+  if (auto GEP = dyn_cast<GEPOperator>(PtrOp)) {
+    auto Euc = [](uint64_t a, uint64_t b) {
+      if (a < b) {
+        uint64_t t = a;
+        a = b;
+        b = t;
+      }
+      while (b != 0) {
+        uint64_t r = a % b;
+        a = b;
+        b = r;
+      }
+      return a;
+    };
+    g = DL.getTypeStoreSize(GEP->getSourceElementType());
+    Value *V = GEP;
+    while (auto GEP = dyn_cast<GEPOperator>(V)) {
+      g = Euc(g, DL.getTypeStoreSize(GEP->getResultElementType()));
+      V = GEP->getPointerOperand();
+    }
+    return g;
+  }
+
+  return 1;
+}
+
+/// If C is a constant patterned array and all valid loaded results for given
+/// alignment are same to a constant, return that constant.
+static bool foldPatternedLoads(Instruction &I, const DataLayout &DL) {
+
+  // Constant *llvm::ConstantFoldLoadFromPatternedAggregate(Constant *C,
+  //                                                        Type *LoadTy,
+  //                                                        uint64_t LoadAlign,
+  //                                                        Value *PtrOp,
+  //                                                        const DataLayout
+  //                                                        &DL) {
+  auto *LI = dyn_cast<LoadInst>(&I);
+  if (!LI)
+    return false;
+  auto *PtrOp = LI->getOperand(0);
+  LLVM_DEBUG(errs() << "pointer operands\n");
+  LLVM_DEBUG(PtrOp->print(errs()));
+  LLVM_DEBUG(errs() << "\n");
+  auto *GV = dyn_cast<GlobalVariable>(getUnderlyingObject(PtrOp));
+  if (!GV || !GV->isConstant() ||
+      (!GV->hasDefinitiveInitializer() && !GV->hasUniqueInitializer()))
+    return false;
+
+  // // is the offset is all constant then
+
+  // PtrOp = PtrOp->stripAndAccumulateConstantOffsets(
+  //     Q.DL, Offset, /* AllowNonInbounts */ true,
+  //     /* AllowInvariantGroup */ true);
+  // if (PtrOp == GV)
+  //   return false;
+  uint64_t LoadAlign =
+      LI->getAlign()
+          .value(); if (LoadAlign >
+                       GV->getAlign().valueOrOne().value()) return false;
+  Constant *C = GV->getInitializer();
+  Type *LoadTy = LI->getType();
+
+  unsigned GVSize = DL.getTypeStoreSize(C->getType());
+
+  // Bail for large initializers in excess of 1K to avoid allocating
+  // too much memory.
+  if (!GVSize || 1024 < GVSize)
+    return false;
+
+  unsigned LoadSize = LoadTy->getScalarSizeInBits() / 8;
+  const APInt Offset(DL.getTypeSizeInBits(C->getType()), 0);
+  Constant *Ca = ConstantFoldLoadFromConst(
+      C, LoadTy, APInt(DL.getTypeSizeInBits(C->getType()), 0), DL);
+
+  // Any possible offset could be multiple of minimum GEP stride. And any valid
+  // offset is multiple of load alignment, so checking onle multiples of bigger
+  // one is sufficient to say results' equality.
+  uint64_t Stride = GetMinimumGEPStride(PtrOp, DL);
+  Stride = Stride < LoadAlign ? LoadAlign : Stride;
+
+  for (uint64_t ByteOffset = Stride, E = GVSize - LoadSize; ByteOffset <= E;
+       ByteOffset += Stride)
+    if (Ca != ConstantFoldLoadFromConst(
+                  C, LoadTy,
+                  APInt(DL.getTypeSizeInBits(C->getType()), ByteOffset), DL))
+      return false;
+  I.replaceAllUsesWith(Ca);
+
+  return true;
+}
+
 /// This is the entry point for folds that could be implemented in regular
 /// InstCombine, but they are separated because they are not expected to
 /// occur frequently and/or have more than a constant-length pattern match.
@@ -850,6 +948,7 @@ static bool foldUnusualPatterns(Function &F, DominatorTree &DT,
       MadeChange |= tryToFPToSat(I, TTI);
       MadeChange |= tryToRecognizeTableBasedCttz(I);
       MadeChange |= foldConsecutiveLoads(I, DL, TTI, AA);
+      MadeChange |= foldPatternedLoads(I, DL);
       // NOTE: This function introduces erasing of the instruction `I`, so it
       // needs to be called at the end of this sequence, otherwise we may make
       // bugs.
