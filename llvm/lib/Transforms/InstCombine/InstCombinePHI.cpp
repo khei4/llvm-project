@@ -1294,71 +1294,134 @@ static Value *simplifyUsingControlFlow(InstCombiner &Self, PHINode &PN,
   if (!all_of(PN.operands(), [](Value *V) { return isa<ConstantInt>(V); }))
     return nullptr;
 
+  unsigned PNSize = PN.getType()->getPrimitiveSizeInBits();
   BasicBlock *BB = PN.getParent();
   // Do not bother with unreachable instructions.
   if (!DT.isReachableFromEntry(BB))
     return nullptr;
 
-  // Determine which value the condition of the idom has for which successor.
+  // Collect phi values
   LLVMContext &Context = PN.getContext();
   auto *IDom = DT.getNode(BB)->getIDom()->getBlock();
   Value *Cond;
-  SmallDenseMap<ConstantInt *, BasicBlock *, 8> SuccForValue;
-  SmallDenseMap<BasicBlock *, unsigned, 8> SuccCount;
-  auto AddSucc = [&](ConstantInt *C, BasicBlock *Succ) {
-    SuccForValue[C] = Succ;
-    ++SuccCount[Succ];
-  };
-  if (auto *BI = dyn_cast<BranchInst>(IDom->getTerminator())) {
-    if (BI->isUnconditional())
-      return nullptr;
+  SmallDenseMap<ConstantInt *, BasicBlock *, 8> PredForPhiValue;
+  SmallDenseMap<BasicBlock *, unsigned, 8> PredCount;
 
+  for (auto Pair : zip(PN.incoming_values(), PN.blocks())) {
+    auto *CI = cast<ConstantInt>(std::get<0>(Pair));
+    BasicBlock *Pred = std::get<1>(Pair);
+    PredForPhiValue[Pred] = CI;
+    ++PredCount[Pred];
+  }
+  // Confirm the condition counts is equal to the incoming phi value number and
+  // collect condition value and successor.
+  SmallVector<std::pair<ConstantInt *, BasicBlock *>, 8> Succs;
+  if (auto *BI = dyn_cast<BranchInst>(IDom->getTerminator())) {
+    if (BI->isUnconditional() || PredForPhiValue.size() != 2)
+      return nullptr;
     Cond = BI->getCondition();
-    AddSucc(ConstantInt::getTrue(Context), BI->getSuccessor(0));
-    AddSucc(ConstantInt::getFalse(Context), BI->getSuccessor(1));
+    Succs.push_back(
+        std::make_pair(ConstantInt::getTrue(Context), BI->getSuccessor(0)));
+    Succs.push_back(std::make_pair(ConstantInt::getFalse(Context)),
+                    BI->getSuccessor(1), );
   } else if (auto *SI = dyn_cast<SwitchInst>(IDom->getTerminator())) {
+    if (PredForPhiValue.size() != SI->getNumCases())
+      return nullptr;
     Cond = SI->getCondition();
-    ++SuccCount[SI->getDefaultDest()];
     for (auto Case : SI->cases())
-      AddSucc(Case.getCaseValue(), Case.getCaseSuccessor());
+      Succs.push_back(
+          std::make_pair(Case.getCaseValue(), Case.getCaseSuccessor()));
   } else {
     return nullptr;
   }
 
-  if (Cond->getType() != PN.getType())
-    return nullptr;
-
-  // Check that edges outgoing from the idom's terminators dominate respective
-  // inputs of the Phi.
+  unsigned CondSize = Cond->getType()->getPrimitiveSizeInBits();
+  // check whether there is one-to-one map
+  enum class CastKind {
+    None,
+    Trunc,
+    Ext,
+  };
+  CastKind CK;
+  if (CondSize < PNSize) {
+    CK = Ext;
+  } else if (CondSize == PNSize) {
+    CK = None;
+  } else {
+    CK = Trunc;
+  }
   std::optional<bool> Invert;
-  for (auto Pair : zip(PN.incoming_values(), PN.blocks())) {
-    auto *Input = cast<ConstantInt>(std::get<0>(Pair));
-    BasicBlock *Pred = std::get<1>(Pair);
-    auto IsCorrectInput = [&](ConstantInt *Input) {
-      // The input needs to be dominated by the corresponding edge of the idom.
+  std::optional<bool> IsSExt;
+  std::optional<auto *> Map;
+  for (auto Pair : Succs) {
+    auto *CaseVal = cast<ConstantInt>(std::get<0>(Pair));
+    BasicBlock *Succ = std::get<1>(Pair);
+    auto HasUniqueSucc = [&](ConstantInt *CaseVal) {
       // This edge cannot be a multi-edge, as that would imply that multiple
       // different condition values follow the same edge.
-      auto It = SuccForValue.find(Input);
-      return It != SuccForValue.end() && SuccCount[It->second] == 1 &&
-             DT.dominates(BasicBlockEdge(IDom, It->second),
-                          BasicBlockEdge(Pred, BB));
+      auto It = PredForPhiValue.find(CaseVal);
+      return It != PredForPhiValue.end() && PredCount[It->second] == 1 &&
+             DT.dominates(BasicBlockEdge(IDom, Succ),
+                          BasicBlockEdge(It->second, BB));
     };
 
-    // Depending on the constant, the condition may need to be inverted.
     bool NeedsInvert;
-    if (IsCorrectInput(Input))
-      NeedsInvert = false;
-    else if (IsCorrectInput(cast<ConstantInt>(ConstantExpr::getNot(Input))))
-      NeedsInvert = true;
-    else
-      return nullptr;
+    bool NeedsSExt;
+    switch (CK) {
+    case Ext:
+      auto *SExtVal = ConstantExpr::getSExt(CaseVal, PN.getType());
+      if (HasUniqueSucc(SExtVal)) {
+        NeedsInvert = false;
+        NeedsSExt = true;
+      } else if (HasUniqueSucc(
+                     cast<ConstantInt>(ConstantExpr::getNot(SExtVal)))) {
+        NeedsInvert = true;
+        NeedsSExt = true;
+      } else
+        return nullptr;
+      auto *ZExtVal = ConstantExpr::getZExt(CaseVal, PN.getType());
+      if (HasUniqueSucc(ZExtVal)) {
+        NeedsInvert = false;
+        NeedsSExt = false;
+      } else if (HasUniqueSucc(
+                     cast<ConstantInt>(ConstantExpr::getNot(ZExtVal)))) {
+        NeedsInvert = true;
+        NeedsSExt = false;
+      } else
+        return nullptr;
+      break;
+    case None:
+      if (HasUniqueSucc(CaseVal))
+        NeedsInvert = false;
+      else if (HasUniqueSucc(cast<ConstantInt>(ConstantExpr::getNot(CaseVal))))
+        NeedsInvert = true;
+      else
+        return nullptr;
+      break;
+    case Trunc:
+      CaseVal = ConstantExpr::getTrunc(CaseVal, PN.getType());
+      if (HasUniqueSucc(CaseVal))
+        NeedsInvert = false;
+      else if (HasUniqueSucc(cast<ConstantInt>(ConstantExpr::getNot(CaseVal))))
+        NeedsInvert = true;
+      else
+        return nullptr;
+      break;
+    };
 
     // Make sure the inversion requirement is always the same.
     if (Invert && *Invert != NeedsInvert)
       return nullptr;
 
+    if (IsSExt && *IsSExt != NeedsSExt)
+      return nullptr;
     Invert = NeedsInvert;
+    IsSExt = NeedsSExt;
   }
+
+  auto *Map = [&](BasicBlock *BB) {
+    // TODO: construct map using Self.Builder
+  };
 
   if (!*Invert)
     return Cond;
