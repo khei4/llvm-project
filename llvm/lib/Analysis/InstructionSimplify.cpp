@@ -1560,7 +1560,8 @@ static Value *simplifyUnsignedRangeCheck(ICmpInst *ZeroICmp,
   Value *X, *Y;
 
   ICmpInst::Predicate EqPred;
-  if (!match(ZeroICmp, m_ICmp(EqPred, m_Value(Y), m_Zero())) ||
+  if (!(match(ZeroICmp, m_ICmp(EqPred, m_Value(Y), m_Zero())) ||
+        match(ZeroICmp, m_ICmp(EqPred, m_Zero(), m_Value(Y)))) ||
       !ICmpInst::isEquality(EqPred))
     return nullptr;
 

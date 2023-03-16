@@ -38,10 +38,7 @@ define i1 @ugt_and_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ugt_and_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_and_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt ptr [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 false
 ;
   %cmp = icmp ugt ptr %x, %y
   %cmpeq = icmp eq ptr null, %x
@@ -71,10 +68,7 @@ define i1 @ugt_swap_and_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ugt_swap_and_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_swap_and_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp ult ptr [[Y:%.*]], [[X:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 false
 ;
   %cmp = icmp ult ptr %y, %x
   %cmpeq = icmp eq ptr null, %x
@@ -125,10 +119,7 @@ define i1 @ule_or_not_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ule_or_not_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_or_not_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp ule ptr [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 true
 ;
   %cmp = icmp ule ptr %x, %y
   %cmpeq = icmp ne ptr null, %x
@@ -158,10 +149,7 @@ define i1 @ule_swap_or_not_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ule_swap_or_not_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_swap_or_not_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp uge ptr [[Y:%.*]], [[X:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 true
 ;
   %cmp = icmp uge ptr %y, %x
   %cmpeq = icmp ne ptr null, %x
@@ -214,10 +202,8 @@ define i1 @ule_and_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ule_and_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_and_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp ule ptr [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X:%.*]]
+; CHECK-NEXT:    ret i1 [[CMPEQ]]
 ;
   %cmp = icmp ule ptr %x, %y
   %cmpeq = icmp eq ptr null, %x
@@ -249,10 +235,8 @@ define i1 @ule_swap_and_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ule_swap_and_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_swap_and_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp uge ptr [[Y:%.*]], [[X:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X:%.*]]
+; CHECK-NEXT:    ret i1 [[CMPEQ]]
 ;
   %cmp = icmp uge ptr %y, %x
   %cmpeq = icmp eq ptr null, %x
@@ -306,9 +290,7 @@ define i1 @ule_or_min_commute(ptr %x, ptr %y)  {
 define i1 @ule_or_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_or_min_commute_inner(
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ule ptr [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 [[CMP]]
 ;
   %cmp = icmp ule ptr %x, %y
   %cmpeq = icmp eq ptr null, %x
@@ -341,9 +323,7 @@ define i1 @ule_swap_or_min_commute(ptr %x, ptr %y)  {
 define i1 @ule_swap_or_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_swap_or_min_commute_inner(
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp uge ptr [[Y:%.*]], [[X:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 [[CMP]]
 ;
   %cmp = icmp uge ptr %y, %x
   %cmpeq = icmp eq ptr null, %x
@@ -397,9 +377,7 @@ define i1 @ugt_and_not_min_commute(ptr %x, ptr %y)  {
 define i1 @ugt_and_not_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_and_not_min_commute_inner(
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt ptr [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 [[CMP]]
 ;
   %cmp = icmp ugt ptr %x, %y
   %cmpeq = icmp ne ptr null, %x
@@ -432,9 +410,7 @@ define i1 @ugt_swap_and_not_min_commute(ptr %x, ptr %y)  {
 define i1 @ugt_swap_and_not_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_swap_and_not_min_commute_inner(
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ult ptr [[Y:%.*]], [[X:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    ret i1 [[CMP]]
 ;
   %cmp = icmp ult ptr %y, %x
   %cmpeq = icmp ne ptr null, %x
@@ -487,10 +463,8 @@ define i1 @ugt_or_not_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ugt_or_not_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_or_not_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt ptr [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X:%.*]]
+; CHECK-NEXT:    ret i1 [[CMPEQ]]
 ;
   %cmp = icmp ugt ptr %x, %y
   %cmpeq = icmp ne ptr null, %x
@@ -522,10 +496,8 @@ define i1 @ugt_swap_or_not_min_commute(ptr %x, ptr %y)  {
 
 define i1 @ugt_swap_or_not_min_commute_inner(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_swap_or_not_min_commute_inner(
-; CHECK-NEXT:    [[CMP:%.*]] = icmp ult ptr [[Y:%.*]], [[X:%.*]]
-; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
-; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
-; CHECK-NEXT:    ret i1 [[R]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X:%.*]]
+; CHECK-NEXT:    ret i1 [[CMPEQ]]
 ;
   %cmp = icmp ult ptr %y, %x
   %cmpeq = icmp ne ptr null, %x
