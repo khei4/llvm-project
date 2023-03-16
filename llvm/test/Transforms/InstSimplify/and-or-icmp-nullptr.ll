@@ -7,7 +7,7 @@
 
 ; There are 6 basic patterns (or 3 with DeMorganized equivalent) with
 ;    2 (commute logic op) *
-;    2 (swap compare operands) *
+;    3 (swap compare and NAND eq operands) *
 ; variations for a total of 24 tests.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -36,6 +36,19 @@ define i1 @ugt_and_min_commute(ptr %x, ptr %y)  {
   ret i1 %r
 }
 
+define i1 @ugt_and_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ugt_and_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt ptr [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ugt ptr %x, %y
+  %cmpeq = icmp eq ptr null, %x
+  %r = and i1 %cmp, %cmpeq
+  ret i1 %r
+}
+
 define i1 @ugt_swap_and_min(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_swap_and_min(
 ; CHECK-NEXT:    ret i1 false
@@ -53,6 +66,19 @@ define i1 @ugt_swap_and_min_commute(ptr %x, ptr %y)  {
   %cmp = icmp ult ptr %y, %x
   %cmpeq = icmp eq ptr %x, null
   %r = and i1 %cmpeq, %cmp
+  ret i1 %r
+}
+
+define i1 @ugt_swap_and_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ugt_swap_and_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult ptr [[Y:%.*]], [[X:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ult ptr %y, %x
+  %cmpeq = icmp eq ptr null, %x
+  %r = and i1 %cmp, %cmpeq
   ret i1 %r
 }
 
@@ -97,6 +123,19 @@ define i1 @ule_or_not_min_commute(ptr %x, ptr %y)  {
   ret i1 %r
 }
 
+define i1 @ule_or_not_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ule_or_not_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ule ptr [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ule ptr %x, %y
+  %cmpeq = icmp ne ptr null, %x
+  %r = or i1 %cmp, %cmpeq
+  ret i1 %r
+}
+
 define i1 @ule_swap_or_not_min(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_swap_or_not_min(
 ; CHECK-NEXT:    ret i1 true
@@ -114,6 +153,19 @@ define i1 @ule_swap_or_not_min_commute(ptr %x, ptr %y)  {
   %cmp = icmp uge ptr %y, %x
   %cmpeq = icmp ne ptr %x, null
   %r = or i1 %cmpeq, %cmp
+  ret i1 %r
+}
+
+define i1 @ule_swap_or_not_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ule_swap_or_not_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp uge ptr [[Y:%.*]], [[X:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp uge ptr %y, %x
+  %cmpeq = icmp ne ptr null, %x
+  %r = or i1 %cmp, %cmpeq
   ret i1 %r
 }
 
@@ -160,6 +212,19 @@ define i1 @ule_and_min_commute(ptr %x, ptr %y)  {
   ret i1 %r
 }
 
+define i1 @ule_and_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ule_and_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ule ptr [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ule ptr %x, %y
+  %cmpeq = icmp eq ptr null, %x
+  %r = and i1 %cmp, %cmpeq
+  ret i1 %r
+}
+
 define i1 @ule_swap_and_min(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_swap_and_min(
 ; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr [[X:%.*]], null
@@ -179,6 +244,19 @@ define i1 @ule_swap_and_min_commute(ptr %x, ptr %y)  {
   %cmp = icmp uge ptr %y, %x
   %cmpeq = icmp eq ptr %x, null
   %r = and i1 %cmpeq, %cmp
+  ret i1 %r
+}
+
+define i1 @ule_swap_and_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ule_swap_and_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp uge ptr [[Y:%.*]], [[X:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp uge ptr %y, %x
+  %cmpeq = icmp eq ptr null, %x
+  %r = and i1 %cmp, %cmpeq
   ret i1 %r
 }
 
@@ -225,6 +303,19 @@ define i1 @ule_or_min_commute(ptr %x, ptr %y)  {
   ret i1 %r
 }
 
+define i1 @ule_or_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ule_or_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ule ptr [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ule ptr %x, %y
+  %cmpeq = icmp eq ptr null, %x
+  %r = or i1 %cmp, %cmpeq
+  ret i1 %r
+}
+
 define i1 @ule_swap_or_min(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ule_swap_or_min(
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp uge ptr [[Y:%.*]], [[X:%.*]]
@@ -244,6 +335,19 @@ define i1 @ule_swap_or_min_commute(ptr %x, ptr %y)  {
   %cmp = icmp uge ptr %y, %x
   %cmpeq = icmp eq ptr %x, null
   %r = or i1 %cmpeq, %cmp
+  ret i1 %r
+}
+
+define i1 @ule_swap_or_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ule_swap_or_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp uge ptr [[Y:%.*]], [[X:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp eq ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp uge ptr %y, %x
+  %cmpeq = icmp eq ptr null, %x
+  %r = or i1 %cmp, %cmpeq
   ret i1 %r
 }
 
@@ -290,6 +394,19 @@ define i1 @ugt_and_not_min_commute(ptr %x, ptr %y)  {
   ret i1 %r
 }
 
+define i1 @ugt_and_not_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ugt_and_not_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt ptr [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ugt ptr %x, %y
+  %cmpeq = icmp ne ptr null, %x
+  %r = and i1 %cmp, %cmpeq
+  ret i1 %r
+}
+
 define i1 @ugt_swap_and_not_min(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_swap_and_not_min(
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ult ptr [[Y:%.*]], [[X:%.*]]
@@ -309,6 +426,19 @@ define i1 @ugt_swap_and_not_min_commute(ptr %x, ptr %y)  {
   %cmp = icmp ult ptr %y, %x
   %cmpeq = icmp ne ptr %x, null
   %r = and i1 %cmpeq, %cmp
+  ret i1 %r
+}
+
+define i1 @ugt_swap_and_not_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ugt_swap_and_not_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult ptr [[Y:%.*]], [[X:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = and i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ult ptr %y, %x
+  %cmpeq = icmp ne ptr null, %x
+  %r = and i1 %cmp, %cmpeq
   ret i1 %r
 }
 
@@ -355,6 +485,19 @@ define i1 @ugt_or_not_min_commute(ptr %x, ptr %y)  {
   ret i1 %r
 }
 
+define i1 @ugt_or_not_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ugt_or_not_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt ptr [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ugt ptr %x, %y
+  %cmpeq = icmp ne ptr null, %x
+  %r = or i1 %cmp, %cmpeq
+  ret i1 %r
+}
+
 define i1 @ugt_swap_or_not_min(ptr %x, ptr %y)  {
 ; CHECK-LABEL: @ugt_swap_or_not_min(
 ; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr [[X:%.*]], null
@@ -374,6 +517,19 @@ define i1 @ugt_swap_or_not_min_commute(ptr %x, ptr %y)  {
   %cmp = icmp ult ptr %y, %x
   %cmpeq = icmp ne ptr %x, null
   %r = or i1 %cmpeq, %cmp
+  ret i1 %r
+}
+
+define i1 @ugt_swap_or_not_min_commute_inner(ptr %x, ptr %y)  {
+; CHECK-LABEL: @ugt_swap_or_not_min_commute_inner(
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult ptr [[Y:%.*]], [[X:%.*]]
+; CHECK-NEXT:    [[CMPEQ:%.*]] = icmp ne ptr null, [[X]]
+; CHECK-NEXT:    [[R:%.*]] = or i1 [[CMP]], [[CMPEQ]]
+; CHECK-NEXT:    ret i1 [[R]]
+;
+  %cmp = icmp ult ptr %y, %x
+  %cmpeq = icmp ne ptr null, %x
+  %r = or i1 %cmp, %cmpeq
   ret i1 %r
 }
 
