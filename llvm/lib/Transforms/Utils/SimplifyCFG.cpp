@@ -6126,10 +6126,13 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
     // Derive the result value from the input value.
     Value *Result = Builder.CreateIntCast(Index, LinearMultiplier->getType(),
                                           false, "switch.idx.cast");
+    // TODO: find when is (not) nuw/nsw
     if (!LinearMultiplier->isOne())
-      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult");
+      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult",
+                                 true, true);
     if (!LinearOffset->isZero())
-      Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset");
+      Result =
+          Builder.CreateAdd(Result, LinearOffset, "switch.offset", true, true);
     return Result;
   }
   case BitMapKind: {
@@ -6142,9 +6145,10 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
     Value *ShiftAmt = Builder.CreateZExtOrTrunc(Index, MapTy, "switch.cast");
 
     // Multiply the shift amount by the element width.
+    // TODO: find when is(not) nuw/nsw
     ShiftAmt = Builder.CreateMul(
         ShiftAmt, ConstantInt::get(MapTy, BitMapElementTy->getBitWidth()),
-        "switch.shiftamt");
+        "switch.shiftamt", true, true);
 
     // Shift down.
     Value *DownShifted =
@@ -6497,8 +6501,9 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     TableIndex = SI->getCondition();
   } else {
     TableIndexOffset = MinCaseVal;
-    TableIndex =
-        Builder.CreateSub(SI->getCondition(), TableIndexOffset, "switch.tableidx");
+    // TODO: find when is (not) nuw/nsw
+    TableIndex = Builder.CreateSub(SI->getCondition(), TableIndexOffset,
+                                   "switch.tableidx", true, true);
   }
 
   // Compute the maximum table size representable by the integer type we are
