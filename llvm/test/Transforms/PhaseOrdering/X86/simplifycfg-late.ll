@@ -9,7 +9,7 @@ target triple = "x86_64--"
 define i32 @f(i32 %c) {
 ; CHECK-LABEL: @f(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = add i32 [[C:%.*]], -42
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = add nsw i32 [[C:%.*]], -42
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 7
 ; CHECK-NEXT:    br i1 [[TMP0]], label [[SWITCH_LOOKUP:%.*]], label [[RETURN:%.*]]
 ; CHECK:       switch.lookup:

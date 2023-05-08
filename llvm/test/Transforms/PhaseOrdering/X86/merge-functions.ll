@@ -10,7 +10,7 @@ target triple = "x86_64-unknown-linux-gnu"
 define i1 @test1(i32 %c) {
 ; CHECK-LABEL: @test1(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = add i32 [[C:%.*]], -100
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = add nsw i32 [[C:%.*]], -100
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 20
 ; CHECK-NEXT:    [[SWITCH_CAST:%.*]] = trunc i32 [[SWITCH_TABLEIDX]] to i20
 ; CHECK-NEXT:    [[SWITCH_DOWNSHIFT:%.*]] = lshr i20 -490991, [[SWITCH_CAST]]

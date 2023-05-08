@@ -36,7 +36,7 @@ target triple = "x86_64-unknown-linux-gnu"
 define i32 @f(i32 %c) {
 ; CHECK-LABEL: @f(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i32 [[C:%.*]], 42
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i32 [[C:%.*]], 42
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 7
 ; CHECK-NEXT:    br i1 [[TMP0]], label [[SWITCH_LOOKUP:%.*]], label [[RETURN:%.*]]
 ; CHECK:       switch.lookup:
@@ -76,7 +76,7 @@ return:
 define i8 @char(i32 %c) {
 ; CHECK-LABEL: @char(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i32 [[C:%.*]], 42
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i32 [[C:%.*]], 42
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 9
 ; CHECK-NEXT:    br i1 [[TMP0]], label [[SWITCH_LOOKUP:%.*]], label [[RETURN:%.*]]
 ; CHECK:       switch.lookup:
@@ -124,7 +124,7 @@ define void @h(i32 %x) {
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[X:%.*]], 4
 ; CHECK-NEXT:    br i1 [[TMP0]], label [[SWITCH_LOOKUP:%.*]], label [[SW_EPILOG:%.*]]
 ; CHECK:       switch.lookup:
-; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul i32 [[X]], 8
+; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul nsw i32 [[X]], 8
 ; CHECK-NEXT:    [[SWITCH_DOWNSHIFT:%.*]] = lshr i32 89655594, [[SWITCH_SHIFTAMT]]
 ; CHECK-NEXT:    [[SWITCH_MASKED:%.*]] = trunc i32 [[SWITCH_DOWNSHIFT]] to i8
 ; CHECK-NEXT:    [[SWITCH_GEP:%.*]] = getelementptr inbounds [4 x float], ptr @switch.table.h, i32 0, i32 [[X]]
@@ -252,12 +252,12 @@ define i32 @crud(i8 zeroext %c)  {
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i8 [[C:%.*]], 33
 ; CHECK-NEXT:    br i1 [[CMP]], label [[LOR_END:%.*]], label [[SWITCH_EARLY_TEST:%.*]]
 ; CHECK:       switch.early.test:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i8 [[C]], 34
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i8 [[C]], 34
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i8 [[SWITCH_TABLEIDX]], 59
 ; CHECK-NEXT:    br i1 [[TMP0]], label [[SWITCH_LOOKUP:%.*]], label [[LOR_END]]
 ; CHECK:       switch.lookup:
 ; CHECK-NEXT:    [[SWITCH_CAST:%.*]] = zext i8 [[SWITCH_TABLEIDX]] to i59
-; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul i59 [[SWITCH_CAST]], 1
+; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul nsw i59 [[SWITCH_CAST]], 1
 ; CHECK-NEXT:    [[SWITCH_DOWNSHIFT:%.*]] = lshr i59 -288230375765830623, [[SWITCH_SHIFTAMT]]
 ; CHECK-NEXT:    [[SWITCH_MASKED:%.*]] = trunc i59 [[SWITCH_DOWNSHIFT]] to i1
 ; CHECK-NEXT:    br label [[LOR_END]]
@@ -351,7 +351,7 @@ define i1 @undef(i32 %tmp) {
 ; CHECK-NEXT:  bb:
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[TMP:%.*]], 9
 ; CHECK-NEXT:    [[SWITCH_CAST:%.*]] = trunc i32 [[TMP]] to i9
-; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul i9 [[SWITCH_CAST]], 1
+; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul nsw i9 [[SWITCH_CAST]], 1
 ; CHECK-NEXT:    [[SWITCH_DOWNSHIFT:%.*]] = lshr i9 3, [[SWITCH_SHIFTAMT]]
 ; CHECK-NEXT:    [[SWITCH_MASKED:%.*]] = trunc i9 [[SWITCH_DOWNSHIFT]] to i1
 ; CHECK-NEXT:    [[TMP4:%.*]] = select i1 [[TMP0]], i1 [[SWITCH_MASKED]], i1 undef
@@ -382,7 +382,7 @@ define i32 @large(i32 %x) {
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[X:%.*]], 0
 ; CHECK-NEXT:    [[MUL:%.*]] = mul i32 [[X]], -10
 ; CHECK-NEXT:    [[SPEC_SELECT:%.*]] = select i1 [[CMP]], i32 [[MUL]], i32 [[X]]
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i32 [[SPEC_SELECT]], 1
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i32 [[SPEC_SELECT]], 1
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 199
 ; CHECK-NEXT:    br i1 [[TMP0]], label [[SWITCH_LOOKUP:%.*]], label [[RETURN:%.*]]
 ; CHECK:       switch.lookup:
@@ -813,7 +813,7 @@ return:
 define i32 @cprop(i32 %x, i32 %y) {
 ; CHECK-LABEL: @cprop(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i32 [[X:%.*]], 1
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i32 [[X:%.*]], 1
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 7
 ; CHECK-NEXT:    br i1 [[TMP0]], label [[SWITCH_LOOKUP:%.*]], label [[RETURN:%.*]]
 ; CHECK:       switch.lookup:
@@ -1220,11 +1220,11 @@ return:
 define i8 @linearmap1(i32 %c) {
 ; CHECK-LABEL: @linearmap1(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i32 [[C:%.*]], 10
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i32 [[C:%.*]], 10
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 4
 ; CHECK-NEXT:    [[SWITCH_IDX_CAST:%.*]] = trunc i32 [[SWITCH_TABLEIDX]] to i8
-; CHECK-NEXT:    [[SWITCH_IDX_MULT:%.*]] = mul i8 [[SWITCH_IDX_CAST]], -5
-; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add i8 [[SWITCH_IDX_MULT]], 18
+; CHECK-NEXT:    [[SWITCH_IDX_MULT:%.*]] = mul nsw i8 [[SWITCH_IDX_CAST]], -5
+; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add nsw i8 [[SWITCH_IDX_MULT]], 18
 ; CHECK-NEXT:    [[X:%.*]] = select i1 [[TMP0]], i8 [[SWITCH_OFFSET]], i8 3
 ; CHECK-NEXT:    ret i8 [[X]]
 ;
@@ -1248,10 +1248,10 @@ return:
 define i32 @linearmap2(i8 %c) {
 ; CHECK-LABEL: @linearmap2(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i8 [[C:%.*]], -13
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i8 [[C:%.*]], -13
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i8 [[SWITCH_TABLEIDX]], 4
 ; CHECK-NEXT:    [[SWITCH_IDX_CAST:%.*]] = zext i8 [[SWITCH_TABLEIDX]] to i32
-; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add i32 [[SWITCH_IDX_CAST]], 18
+; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add nsw i32 [[SWITCH_IDX_CAST]], 18
 ; CHECK-NEXT:    [[X:%.*]] = select i1 [[TMP0]], i32 [[SWITCH_OFFSET]], i32 3
 ; CHECK-NEXT:    ret i32 [[X]]
 ;
@@ -1275,10 +1275,10 @@ return:
 define i8 @linearmap3(i32 %c) {
 ; CHECK-LABEL: @linearmap3(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i32 [[C:%.*]], 10
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i32 [[C:%.*]], 10
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 4
 ; CHECK-NEXT:    [[SWITCH_IDX_CAST:%.*]] = trunc i32 [[SWITCH_TABLEIDX]] to i8
-; CHECK-NEXT:    [[SWITCH_IDX_MULT:%.*]] = mul i8 [[SWITCH_IDX_CAST]], 100
+; CHECK-NEXT:    [[SWITCH_IDX_MULT:%.*]] = mul nsw i8 [[SWITCH_IDX_CAST]], 100
 ; CHECK-NEXT:    [[X:%.*]] = select i1 [[TMP0]], i8 [[SWITCH_IDX_MULT]], i8 3
 ; CHECK-NEXT:    ret i8 [[X]]
 ;
@@ -1302,7 +1302,7 @@ return:
 define i8 @linearmap4(i32 %c) {
 ; CHECK-LABEL: @linearmap4(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i32 [[C:%.*]], -2
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i32 [[C:%.*]], -2
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[SWITCH_TABLEIDX]], 4
 ; CHECK-NEXT:    [[SWITCH_IDX_CAST:%.*]] = trunc i32 [[SWITCH_TABLEIDX]] to i8
 ; CHECK-NEXT:    [[X:%.*]] = select i1 [[TMP0]], i8 [[SWITCH_IDX_CAST]], i8 3
@@ -1330,7 +1330,7 @@ define i32 @reuse_cmp1(i32 %x) {
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[X:%.*]], 4
 ; CHECK-NEXT:    [[INVERTED_CMP:%.*]] = xor i1 [[TMP0]], true
-; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add i32 [[X]], 10
+; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add nsw i32 [[X]], 10
 ; CHECK-NEXT:    [[R_0:%.*]] = select i1 [[TMP0]], i32 [[SWITCH_OFFSET]], i32 0
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp eq i32 [[R_0]], 0
 ; CHECK-NEXT:    [[RETVAL_0:%.*]] = select i1 [[INVERTED_CMP]], i32 100, i32 [[R_0]]
@@ -1398,7 +1398,7 @@ define i32 @no_reuse_cmp(i32 %x) {
 ; CHECK-LABEL: @no_reuse_cmp(
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[X:%.*]], 4
-; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add i32 [[X]], 10
+; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add nsw i32 [[X]], 10
 ; CHECK-NEXT:    [[R_0:%.*]] = select i1 [[TMP0]], i32 [[SWITCH_OFFSET]], i32 12
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ne i32 [[R_0]], 0
 ; CHECK-NEXT:    [[RETVAL_0:%.*]] = select i1 [[CMP]], i32 [[R_0]], i32 100
@@ -1434,7 +1434,7 @@ define i32 @no_reuse_cmp2(i32 %x, i32 %y) {
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[EC:%.*]] = icmp ne i32 [[Y:%.*]], 0
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[X:%.*]], 4
-; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add i32 [[X]], 10
+; CHECK-NEXT:    [[SWITCH_OFFSET:%.*]] = add nsw i32 [[X]], 10
 ; CHECK-NEXT:    [[SPEC_SELECT:%.*]] = select i1 [[TMP0]], i32 [[SWITCH_OFFSET]], i32 0
 ; CHECK-NEXT:    [[R_0:%.*]] = select i1 [[EC]], i32 [[SPEC_SELECT]], i32 100
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp eq i32 [[R_0]], 0
@@ -1538,7 +1538,7 @@ end:
 define i32 @covered_switch_with_bit_tests(i3) {
 ; CHECK-LABEL: @covered_switch_with_bit_tests(
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub i3 [[TMP0:%.*]], -4
+; CHECK-NEXT:    [[SWITCH_TABLEIDX:%.*]] = sub nsw i3 [[TMP0:%.*]], -4
 ; CHECK-NEXT:    [[SWITCH_MASKINDEX:%.*]] = zext i3 [[SWITCH_TABLEIDX]] to i8
 ; CHECK-NEXT:    [[SWITCH_SHIFTED:%.*]] = lshr i8 -61, [[SWITCH_MASKINDEX]]
 ; CHECK-NEXT:    [[SWITCH_LOBIT:%.*]] = trunc i8 [[SWITCH_SHIFTED]] to i1
@@ -1667,7 +1667,7 @@ define i1 @use_x_as_index(i32 %x) {
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[X:%.*]], 9
 ; CHECK-NEXT:    [[SWITCH_CAST:%.*]] = trunc i32 [[X]] to i9
-; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul i9 [[SWITCH_CAST]], 1
+; CHECK-NEXT:    [[SWITCH_SHIFTAMT:%.*]] = mul nsw i9 [[SWITCH_CAST]], 1
 ; CHECK-NEXT:    [[SWITCH_DOWNSHIFT:%.*]] = lshr i9 -234, [[SWITCH_SHIFTAMT]]
 ; CHECK-NEXT:    [[SWITCH_MASKED:%.*]] = trunc i9 [[SWITCH_DOWNSHIFT]] to i1
 ; CHECK-NEXT:    [[STOREMERGE:%.*]] = select i1 [[TMP0]], i1 [[SWITCH_MASKED]], i1 false

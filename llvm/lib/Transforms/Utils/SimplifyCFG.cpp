@@ -5942,7 +5942,8 @@ public:
 
   /// Build instructions with Builder to retrieve the value at
   /// the position given by Index in the lookup table.
-  Value *BuildLookup(Value *Index, IRBuilder<> &Builder);
+  Value *BuildLookup(Value *Index, IRBuilder<> &Builder,
+                     bool DefaultDestReachable);
 
   /// Return true if a table with TableSize elements of
   /// type ElementType would fit in a target-legal register.
@@ -6106,7 +6107,8 @@ SwitchLookupTable::SwitchLookupTable(
   Kind = ArrayKind;
 }
 
-Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
+Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder,
+                                      bool DefaultDestReachable) {
   switch (Kind) {
   case SingleValueKind:
     return SingleValue;
@@ -6115,9 +6117,15 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
     Value *Result = Builder.CreateIntCast(Index, LinearMultiplier->getType(),
                                           false, "switch.idx.cast");
     if (!LinearMultiplier->isOne())
-      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult");
+      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult",
+                                 /*HasNUW =*/false,
+                                 /*HasNSW =*/!DefaultDestReachable);
+
     if (!LinearOffset->isZero())
-      Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset");
+      Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset",
+                                 /*HasNUW =*/false,
+                                 /*HasNSW =*/!DefaultDestReachable);
+
     return Result;
   }
   case BitMapKind: {
@@ -6132,7 +6140,9 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
     // Multiply the shift amount by the element width.
     ShiftAmt = Builder.CreateMul(
         ShiftAmt, ConstantInt::get(MapTy, BitMapElementTy->getBitWidth()),
-        "switch.shiftamt");
+        "switch.shiftamt",
+        /*HasNUW =*/false,
+        /*HasNSW =*/!DefaultDestReachable);
 
     // Shift down.
     Value *DownShifted =
@@ -6387,6 +6397,11 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   if (SI->getNumCases() < 3)
     return false;
 
+  // TODO: check that default dist is unreachable
+  // TODO: insert unreachability check to proper place
+  bool DefaultDestReachable =
+      isa<UnreachableInst>(SI->getDefaultDest()->getTerminator());
+
   // Figure out the corresponding result for each case value and phi node in the
   // common destination, as well as the min and max case values.
   assert(!SI->cases().empty());
@@ -6485,8 +6500,10 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     TableIndex = SI->getCondition();
   } else {
     TableIndexOffset = MinCaseVal;
-    TableIndex =
-        Builder.CreateSub(SI->getCondition(), TableIndexOffset, "switch.tableidx");
+    // TODO: check this is OK
+    TableIndex = Builder.CreateSub(SI->getCondition(), TableIndexOffset,
+                                   "switch.tableidx", /*HasNUW =*/false,
+                                   /*HasNSW =*/!DefaultDestReachable);
   }
 
   // Compute the maximum table size representable by the integer type we are
@@ -6581,7 +6598,8 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     SwitchLookupTable Table(Mod, TableSize, TableIndexOffset, ResultList, DV,
                             DL, FuncName);
 
-    Value *Result = Table.BuildLookup(TableIndex, Builder);
+    Value *Result =
+        Table.BuildLookup(TableIndex, Builder, DefaultDestReachable);
 
     // Do a small peephole optimization: re-use the switch table compare if
     // possible.
