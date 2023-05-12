@@ -6540,8 +6540,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   // switching upon.
   // なんでMinCaseValの型のビット数で、CaseSizeって名前？
   unsigned CaseSize = MinCaseVal->getType()->getPrimitiveSizeInBits();
-  // Caseが64個以上あると、インデックスの
-  //
+  // Caseが64個以上あると、インデックスができないよねというのはまあそう
   uint64_t MaxTableSize = CaseSize > 63 ? UINT64_MAX : 1ULL << CaseSize;
   assert(MaxTableSize >= TableSize &&
          "It is impossible for a switch to have more entries than the max "
@@ -6553,7 +6552,6 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
 
   // ここで、Range checkみたいなのが入りますよみたいなこと
   // Unreachableなだけじゃ？
-  // MaxTableSizeってなんだけっけ？
   const bool DefaultIsReachable =
       !isa<UnreachableInst>(SI->getDefaultDest()->getFirstNonPHIOrDbg());
   const bool GeneratingCoveredLookupTable = (MaxTableSize == TableSize);
