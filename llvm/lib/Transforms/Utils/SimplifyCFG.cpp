@@ -5942,8 +5942,7 @@ public:
 
   /// Build instructions with Builder to retrieve the value at
   /// the position given by Index in the lookup table.
-  Value *BuildLookup(Value *Index, IRBuilder<> &Builder,
-                     bool DefaultDestReachable);
+  Value *BuildLookup(Value *Index, IRBuilder<> &Builder, bool HasDefault);
 
   /// Return true if a table with TableSize elements of
   /// type ElementType would fit in a target-legal register.
@@ -6108,7 +6107,7 @@ SwitchLookupTable::SwitchLookupTable(
 }
 
 Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder,
-                                      bool DefaultDestReachable) {
+                                      bool HasDefault) {
   switch (Kind) {
   case SingleValueKind:
     return SingleValue;
@@ -6116,15 +6115,18 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder,
     // Derive the result value from the input value.
     Value *Result = Builder.CreateIntCast(Index, LinearMultiplier->getType(),
                                           false, "switch.idx.cast");
+    // if default branch exists no signed overflow happens
+    // TODO: check if the case, which checks signed oveflow by value. I believe
+    // it's undefined behavior.
     if (!LinearMultiplier->isOne())
       Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult",
                                  /*HasNUW =*/false,
-                                 /*HasNSW =*/!DefaultDestReachable);
+                                 /*HasNSW =*/!HasDefault);
 
     if (!LinearOffset->isZero())
       Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset",
                                  /*HasNUW =*/false,
-                                 /*HasNSW =*/!DefaultDestReachable);
+                                 /*HasNSW =*/!HasDefault);
 
     return Result;
   }
@@ -6142,7 +6144,7 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder,
         ShiftAmt, ConstantInt::get(MapTy, BitMapElementTy->getBitWidth()),
         "switch.shiftamt",
         /*HasNUW =*/false,
-        /*HasNSW =*/!DefaultDestReachable);
+        /*HasNSW =*/!HasDefault);
 
     // Shift down.
     Value *DownShifted =
@@ -6375,12 +6377,19 @@ static void reuseTableCompare(
 static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
                                 DomTreeUpdater *DTU, const DataLayout &DL,
                                 const TargetTransformInfo &TTI) {
+
+  // Q: このDegenerateってどういうケース？
   assert(SI->getNumCases() > 1 && "Degenerate switch?");
 
   BasicBlock *BB = SI->getParent();
   Function *Fn = BB->getParent();
   // Only build lookup table when we have a target that supports it or the
   // attribute is not set.
+
+  // Q: TTI.shouldBuildLookupTablesはどこで判断？
+  // TTIはconstでtrueを返している。
+  // no-jump-tablesAttributeって何.
+  // Jumpを作らないように指定することができるAttributeらしい
   if (!TTI.shouldBuildLookupTables() ||
       (Fn->getFnAttribute("no-jump-tables").getValueAsBool()))
     return false;
@@ -6388,9 +6397,12 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   // FIXME: If the switch is too sparse for a lookup table, perhaps we could
   // split off a dense part and build a lookup table for that.
 
+  // Q: LUTにするには、疎すぎるってどんなとき?
+
   // FIXME: This creates arrays of GEPs to constant strings, which means each
   // GEP needs a runtime relocation in PIC code. We should just build one big
   // string and lookup indices into that.
+  // ここのPICってどういう意味？ -> Position independent code
 
   // Ignore switches with less than three cases. Lookup tables will not make
   // them faster, so we don't analyze them.
@@ -6399,11 +6411,13 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
 
   // TODO: check that default dist is unreachable
   // TODO: insert unreachability check to proper place
-  bool DefaultDestReachable =
-      isa<UnreachableInst>(SI->getDefaultDest()->getTerminator());
+  bool HasDefault =
+      !isa<UnreachableInst>(SI->getDefaultDest()->getFirstNonPHIOrDbg());
 
   // Figure out the corresponding result for each case value and phi node in the
   // common destination, as well as the min and max case values.
+  // 最小、最大をとって、線形関数で補間できるかみたいなことをしている
+  // Switchの補間を強くするとか
   assert(!SI->cases().empty());
   SwitchInst::CaseIt CI = SI->case_begin();
   ConstantInt *MinCaseVal = CI->getCaseValue();
@@ -6419,15 +6433,22 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   SmallVector<PHINode *, 4> PHIs;
 
   for (SwitchInst::CaseIt E = SI->case_end(); CI != E; ++CI) {
+    // Caseの値の最小/最大を集める
     ConstantInt *CaseVal = CI->getCaseValue();
     if (CaseVal->getValue().slt(MinCaseVal->getValue()))
       MinCaseVal = CaseVal;
     if (CaseVal->getValue().sgt(MaxCaseVal->getValue()))
       MaxCaseVal = CaseVal;
 
+    // for の中でusingしていて、キモい、
+    // getCaseResultsは、なにしてるこれ？
+    // Resultsを集めていそうだが、
     // Resulting value at phi nodes for this case value.
     using ResultsTy = SmallVector<std::pair<PHINode *, Constant *>, 4>;
     ResultsTy Results;
+    // getCaseResultsは、なにしてるこれ. どこまで言ったら結果なんだ？
+    // Switch, Mergeしないときもあるしな
+    // Resultsを集めていそうだが、
     if (!getCaseResults(SI, CaseVal, CI->getCaseSuccessor(), &CommonDest,
                         Results, DL, TTI))
       return false;
@@ -6451,7 +6472,11 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
 
   // If the table has holes, we need a constant result for the default case
   // or a bitmask that fits in a register.
+  // Constantでないと困る。というのはわかる。
+  // が、Bitmaskまで計算するのか...
   SmallVector<std::pair<PHINode *, Constant *>, 4> DefaultResultsList;
+
+  // getCaseResults. Caseの結果の集合を集めてるんだろうな→名前
   bool HasDefaultResults =
       getCaseResults(SI, nullptr, SI->getDefaultDest(), &CommonDest,
                      DefaultResultsList, DL, TTI);
@@ -6465,6 +6490,8 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   bool UseSwitchConditionAsTableIndex = ShouldUseSwitchConditionAsTableIndex(
       *MinCaseVal, *MaxCaseVal, HasDefaultResults, ResultTypes, DL, TTI);
   uint64_t TableSize;
+  // 負じゃなければ、それをそのまま使う
+  // Tableのサイズ、は、そのまま使うならケースの最大値になる。
   if (UseSwitchConditionAsTableIndex)
     TableSize = MaxCaseVal->getLimitedValue() + 1;
   else
@@ -6481,6 +6508,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
       return false;
   }
 
+  // ここで最終的にLUTを作ったほうがいいかどうかを判断してる
   if (!ShouldBuildLookupTable(SI, TableSize, TTI, DL, ResultTypes))
     return false;
 
@@ -6495,20 +6523,25 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   Builder.SetInsertPoint(SI);
   Value *TableIndex;
   ConstantInt *TableIndexOffset;
+  // switchの値をtableに使うかどうか、具体的にどんな値があるのか想像できてない
+  // 例えば、今のやつは？→使わないんだろうね
+  // subをして、正規化みたいなのをするってことやな
   if (UseSwitchConditionAsTableIndex) {
     TableIndexOffset = ConstantInt::get(MaxCaseVal->getType(), 0);
     TableIndex = SI->getCondition();
   } else {
     TableIndexOffset = MinCaseVal;
-    // TODO: check this is OK
     TableIndex = Builder.CreateSub(SI->getCondition(), TableIndexOffset,
                                    "switch.tableidx", /*HasNUW =*/false,
-                                   /*HasNSW =*/!DefaultDestReachable);
+                                   /*HasNSW =*/!HasDefault);
   }
 
   // Compute the maximum table size representable by the integer type we are
   // switching upon.
+  // なんでMinCaseValの型のビット数で、CaseSizeって名前？
   unsigned CaseSize = MinCaseVal->getType()->getPrimitiveSizeInBits();
+  // Caseが64個以上あると、インデックスの
+  //
   uint64_t MaxTableSize = CaseSize > 63 ? UINT64_MAX : 1ULL << CaseSize;
   assert(MaxTableSize >= TableSize &&
          "It is impossible for a switch to have more entries than the max "
@@ -6517,11 +6550,15 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   // If the default destination is unreachable, or if the lookup table covers
   // all values of the conditional variable, branch directly to the lookup table
   // BB. Otherwise, check that the condition is within the case range.
+
+  // ここで、Range checkみたいなのが入りますよみたいなこと
+  // Unreachableなだけじゃ？
+  // MaxTableSizeってなんだけっけ？
   const bool DefaultIsReachable =
       !isa<UnreachableInst>(SI->getDefaultDest()->getFirstNonPHIOrDbg());
   const bool GeneratingCoveredLookupTable = (MaxTableSize == TableSize);
   BranchInst *RangeCheckBranch = nullptr;
-
+  //  LookupTAべｌの値でカバーできてるなら、LookUpBBを追加するだけ
   if (!DefaultIsReachable || GeneratingCoveredLookupTable) {
     Builder.CreateBr(LookupBB);
     if (DTU)
@@ -6598,8 +6635,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     SwitchLookupTable Table(Mod, TableSize, TableIndexOffset, ResultList, DV,
                             DL, FuncName);
 
-    Value *Result =
-        Table.BuildLookup(TableIndex, Builder, DefaultDestReachable);
+    Value *Result = Table.BuildLookup(TableIndex, Builder, HasDefault);
 
     // Do a small peephole optimization: re-use the switch table compare if
     // possible.
