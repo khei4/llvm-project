@@ -5942,7 +5942,7 @@ public:
 
   /// Build instructions with Builder to retrieve the value at
   /// the position given by Index in the lookup table.
-  Value *BuildLookup(Value *Index, IRBuilder<> &Builder);
+  Value *BuildLookup(Value *Index, IRBuilder<> &Builder, bool DefaultIsReachable);
 
   /// Return true if a table with TableSize elements of
   /// type ElementType would fit in a target-legal register.
@@ -6106,7 +6106,8 @@ SwitchLookupTable::SwitchLookupTable(
   Kind = ArrayKind;
 }
 
-Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
+Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder,
+                                      bool DefaultIsReachable) {
   switch (Kind) {
   case SingleValueKind:
     return SingleValue;
@@ -6115,9 +6116,15 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
     Value *Result = Builder.CreateIntCast(Index, LinearMultiplier->getType(),
                                           false, "switch.idx.cast");
     if (!LinearMultiplier->isOne())
-      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult");
+      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult",
+                                 /*HasNUW =*/false,
+                                 /*HasNSW =*/!DefaultIsReachable);
+
     if (!LinearOffset->isZero())
-      Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset");
+      Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset",
+                                 /*HasNUW =*/false,
+                                 /*HasNSW =*/!DefaultIsReachable);
+
     return Result;
   }
   case BitMapKind: {
@@ -6129,10 +6136,13 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
     // truncating it to the width of the bitmask is safe.
     Value *ShiftAmt = Builder.CreateZExtOrTrunc(Index, MapTy, "switch.cast");
 
-    // Multiply the shift amount by the element width.
+    // Multiply the shift amount by the element width. NUW/NSW can always be
+    // set, because shift amount must be in [0,BitWidth).
     ShiftAmt = Builder.CreateMul(
         ShiftAmt, ConstantInt::get(MapTy, BitMapElementTy->getBitWidth()),
-        "switch.shiftamt");
+        "switch.shiftamt",
+        /*HasNUW =*/true,
+        /*HasNSW =*/true);
 
     // Shift down.
     Value *DownShifted =
@@ -6585,7 +6595,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     SwitchLookupTable Table(Mod, TableSize, TableIndexOffset, ResultList, DV,
                             DL, FuncName);
 
-    Value *Result = Table.BuildLookup(TableIndex, Builder);
+    Value *Result = Table.BuildLookup(TableIndex, Builder, DefaultIsReachable);
 
     // Do a small peephole optimization: re-use the switch table compare if
     // possible.
