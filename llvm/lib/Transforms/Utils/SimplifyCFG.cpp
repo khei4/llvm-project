@@ -5942,7 +5942,7 @@ public:
 
   /// Build instructions with Builder to retrieve the value at
   /// the position given by Index in the lookup table.
-  Value *BuildLookup(Value *Index, IRBuilder<> &Builder);
+  Value *BuildLookup(Value *Index, IRBuilder<> &Builder, APInt &MaxIndex);
 
   /// Return true if a table with TableSize elements of
   /// type ElementType would fit in a target-legal register.
@@ -6106,7 +6106,7 @@ SwitchLookupTable::SwitchLookupTable(
   Kind = ArrayKind;
 }
 
-Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
+Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder, APInt &MaxIndex) {
   switch (Kind) {
   case SingleValueKind:
     return SingleValue;
@@ -6114,10 +6114,18 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
     // Derive the result value from the input value.
     Value *Result = Builder.CreateIntCast(Index, LinearMultiplier->getType(),
                                           false, "switch.idx.cast");
+    // Check whether signed wrap needed.
+    bool MulSW, AddSW;
+    // TODO: cast BitWidth by cleaner way
+    MaxIndex = APInt(LinearMultiplier->getBitWidth(), MaxIndex.getZExtValue());
+    LinearOffset->getValue().sadd_ov(
+        LinearMultiplier->getValue().smul_ov(MaxIndex, MulSW), AddSW);
     if (!LinearMultiplier->isOne())
-      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult");
+      Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult",
+                                 /*HasNUW = */ false, /*HasNSW = */ !MulSW);
     if (!LinearOffset->isZero())
-      Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset");
+      Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset",
+                                 /*HasNUW = */ false, /*HasNSW = */ !AddSW);
     return Result;
   }
   case BitMapKind: {
@@ -6497,20 +6505,22 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   Builder.SetInsertPoint(SI);
   Value *TableIndex;
   ConstantInt *TableIndexOffset;
+  APInt MaxIndex;
   if (UseSwitchConditionAsTableIndex) {
     TableIndexOffset = ConstantInt::get(MaxCaseVal->getType(), 0);
     TableIndex = SI->getCondition();
+    MaxIndex = MaxCaseVal->getValue();
   } else {
     TableIndexOffset = MinCaseVal;
     // If the default is unreachable, all case values are s>= MinCaseVal. Then
     // we can try to attach nsw.
     bool CanBeWrapped = true;
     if (!DefaultIsReachable)
-      MaxCaseVal->getValue().ssub_ov(MinCaseVal->getValue(), CanBeWrapped);
-
+      MaxIndex =
+          MaxCaseVal->getValue().ssub_ov(MinCaseVal->getValue(), CanBeWrapped);
     TableIndex = Builder.CreateSub(SI->getCondition(), TableIndexOffset,
                                    "switch.tableidx", /*HasNUW =*/false,
-                                   /*HasNSW =*/!CanBeWrapped);
+                                   /*HasNSW =*/!(CanBeWrapped || DefaultIsReachable));
   }
 
   BranchInst *RangeCheckBranch = nullptr;
@@ -6591,7 +6601,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     SwitchLookupTable Table(Mod, TableSize, TableIndexOffset, ResultList, DV,
                             DL, FuncName);
 
-    Value *Result = Table.BuildLookup(TableIndex, Builder);
+    Value *Result = Table.BuildLookup(TableIndex, Builder, MaxIndex);
 
     // Do a small peephole optimization: re-use the switch table compare if
     // possible.
