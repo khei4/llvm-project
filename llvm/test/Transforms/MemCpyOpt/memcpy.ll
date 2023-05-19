@@ -391,3 +391,210 @@ define void @test11(ptr addrspace(1) nocapture dereferenceable(80) %P) {
 
 declare void @f1(ptr nocapture sret(%struct.big))
 declare void @f2(ptr)
+
+declare void @f(ptr)
+declare void @f_full_readonly(ptr nocapture noalias readonly)
+declare void @f_full_readnone(ptr nocapture noalias readnone)
+declare void @f_full_memory_none(ptr nocapture noalias) memory(none)
+
+; TODO: remove memcpy, which is guaranteed to be invariant
+; before and after the call because of its attributes.
+define void @immut_param(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly align 4 [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f(ptr align 4 nocapture noalias readonly %val1)
+  ret void
+}
+
+; TODO: remove memcpy
+define void @immut_param_readonly(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_readonly(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f_full_readonly(ptr align 4 [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f_full_readonly(ptr align 4 %val1)
+  ret void
+}
+
+; TODO: remove memcpy
+define void @immut_param_readnone(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_readnone(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @f_full_readnone(ptr align 4 [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f_full_readnone(ptr align 4 %val1)
+  ret void
+}
+
+; TODO: remove memcpy
+define void @immut_param_memory_none(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_memory_none(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @f_full_memory_none(ptr align 4 [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f_full_memory_none(ptr align 4 %val1)
+  ret void
+}
+
+; TODO: remove memcpy
+define void @immut_param_no_align(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_no_align(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f(ptr nocapture noalias readonly %val1)
+  ret void
+}
+
+; TODO: remove smaller memcpy than alloca size, it's not safe for general pointer,
+; but ok for unescaped alloca dest.
+define void @immut_param_smaller_size(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_smaller_size(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i32, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f(ptr nocapture noalias readonly %val1)
+  ret void
+}
+
+; can't remove memcpy because src is modified between call and memcpy
+define void @immut_param_modified(ptr align 4 noalias %val) {
+; CHECK-LABEL: @immut_param_modified(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    store i32 13, ptr [[VAL]], align 4
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly align 4 [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  store i32 13, ptr %val
+  call void @f(ptr nocapture align 4 noalias readonly %val1)
+  ret void
+}
+
+; can't remove memcpy if we remove, the alignment assumption would break
+define void @immut_param_bigger_align(ptr align 16 noalias %val) {
+; CHECK-LABEL: @immut_param_bigger_align(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly align 4 [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f(ptr nocapture align 4 noalias readonly %val1)
+  ret void
+}
+
+; can't remove memcpy, because if the %val directly passed to @f,
+; alignment of ptr to f's argument will be different.
+define void @immut_invalid_align_branched(i1 %c, ptr noalias %val) {
+; CHECK-LABEL: @immut_invalid_align_branched(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL:%.*]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f(ptr nocapture noalias readonly %val1)
+  ret void
+}
+
+; can't remove memcpy, because alias might modify the src.
+define void @immut_but_alias_src(i1 %c, ptr %val) {
+; CHECK-LABEL: @immut_but_alias_src(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca [4 x i8], align 4
+; CHECK-NEXT:    [[VAL2:%.*]] = alloca [16 x i8], align 16
+; CHECK-NEXT:    [[VAL3:%.*]] = select i1 [[C:%.*]], ptr [[VAL1]], ptr [[VAL2]]
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL3]], ptr align 4 [[VAL:%.*]], i64 4, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly [[VAL3]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca [4 x i8], align 4
+  %val2 = alloca [16 x i8], align 16
+  %val3 = select i1 %c, ptr %val1, ptr %val2
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val3, ptr align 4 %val, i64 4, i1 false)
+  call void @f(ptr nocapture noalias readonly %val3)
+  ret void
+}
+
+; TODO: remove memcpy
+define void @immut_unescaped_alloca(i1 %c) {
+; CHECK-LABEL: @immut_unescaped_alloca(
+; CHECK-NEXT:    [[VAL:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    store i32 42, ptr [[VAL]], align 4
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f_full_readonly(ptr [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val = alloca i8, align 4
+  store i32 42, ptr %val
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  call void @f_full_readonly(ptr %val1)
+  ret void
+}
+
+; can't remove memcpy, because alloca src is modified
+define void @immut_unescaped_alloca_modified(i1 %c) {
+; CHECK-LABEL: @immut_unescaped_alloca_modified(
+; CHECK-NEXT:    [[VAL:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    store i32 42, ptr [[VAL]], align 4
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL1]], ptr align 4 [[VAL]], i64 1, i1 false)
+; CHECK-NEXT:    call void @f_full_readonly(ptr [[VAL1]])
+; CHECK-NEXT:    ret void
+;
+  %val = alloca i8, align 4
+  store i32 42, ptr %val
+  %val1 = alloca i8, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val1, ptr align 4 %val, i64 1, i1 false)
+  store i32 13, ptr %val
+  call void @f_full_readonly(ptr %val1)
+  ret void
+}
+
+; TODO: remove memcpy
+define void @immut_valid_align_select(i1 %c, ptr noalias align 4 %val) {
+; CHECK-LABEL: @immut_valid_align_select(
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca [4 x i8], align 4
+; CHECK-NEXT:    [[VAL2:%.*]] = alloca [16 x i8], align 4
+; CHECK-NEXT:    [[VAL3:%.*]] = select i1 [[C:%.*]], ptr [[VAL1]], ptr [[VAL2]]
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[VAL3]], ptr align 4 [[VAL:%.*]], i64 4, i1 false)
+; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly [[VAL3]])
+; CHECK-NEXT:    ret void
+;
+  %val1 = alloca [4 x i8], align 4
+  %val2 = alloca [16 x i8], align 4
+  %val3 = select i1 %c, ptr %val1, ptr %val2
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %val3, ptr align 4 %val, i64 4, i1 false)
+  call void @f(ptr nocapture noalias readonly %val3)
+  ret void
+}
