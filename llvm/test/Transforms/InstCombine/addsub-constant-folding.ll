@@ -637,3 +637,13 @@ define i8 @sub_from_constant_extra_use(i8 %x, i8 %y) {
   %r = add i8 %sub, %y
   ret i8 %r
 }
+
+define i8 @add_sub_nsw(i8 %x, i8 %y) {
+; CHECK-LABEL: @add_sub_nsw(
+; CHECK-NEXT:    [[B:%.*]] = sub nsw i8 -11, [[X:%.*]]
+; CHECK-NEXT:    ret i8 [[B]]
+;
+  %a = add nsw i8 %x, 12; a = x + 12
+  %b = sub nsw i8 1, %a; b = 0 - a = (12 - 1 -  x)
+  ret i8 %b
+}
