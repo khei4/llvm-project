@@ -598,8 +598,11 @@ define void @immut_param_smaller_align(ptr align 4 noalias %val) {
 define void @immut_param_enforced_alignment() {
 ; CHECK-LABEL: @immut_param_enforced_alignment(
 ; CHECK-NEXT:    [[VAL:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 1, ptr nocapture [[VAL]])
 ; CHECK-NEXT:    store i32 42, ptr [[VAL]], align 4
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
 ; CHECK-NEXT:    call void @f(ptr noalias nocapture readonly [[VAL]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 1, ptr nocapture [[VAL]])
 ; CHECK-NEXT:    ret void
 ;
   %val = alloca i8, align 1
@@ -646,8 +649,11 @@ define void @immut_but_alias_src(ptr %val) {
 define void @immut_unescaped_alloca() {
 ; CHECK-LABEL: @immut_unescaped_alloca(
 ; CHECK-NEXT:    [[VAL:%.*]] = alloca i8, align 4
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 1, ptr nocapture [[VAL]])
 ; CHECK-NEXT:    store i32 42, ptr [[VAL]], align 4
+; CHECK-NEXT:    [[VAL1:%.*]] = alloca i8, align 4
 ; CHECK-NEXT:    call void @f_full_readonly(ptr [[VAL]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 1, ptr nocapture [[VAL]])
 ; CHECK-NEXT:    ret void
 ;
   %val = alloca i8, align 4

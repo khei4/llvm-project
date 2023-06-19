@@ -69,6 +69,7 @@ STATISTIC(NumMemSetInfer, "Number of memsets inferred");
 STATISTIC(NumMoveToCpy,   "Number of memmoves converted to memcpy");
 STATISTIC(NumCpyToSet,    "Number of memcpys converted to memset");
 STATISTIC(NumCallSlot,    "Number of call slot optimizations performed");
+STATISTIC(NumStackMove, "Number of stack-move optimizations performed");
 
 namespace {
 
@@ -728,6 +729,23 @@ bool MemCpyOptPass::processStoreOfLoad(StoreInst *SI, LoadInst *LI,
     eraseInstruction(LI);
     ++NumMemCpyInstr;
     return true;
+  }
+
+  // If this is a load-store pair from a stack slot to a stack slot, we
+  // might be able to perform the stack-move optimization just as we do for
+  // memcpys from an alloca to an alloca.
+  if (auto *DestAlloca = dyn_cast<AllocaInst>(SI->getPointerOperand())) {
+    if (auto *SrcAlloca = dyn_cast<AllocaInst>(LI->getPointerOperand())) {
+      if (performStackMoveOptzn(LI, SI, DestAlloca, SrcAlloca,
+                                DL.getTypeStoreSize(T))) {
+        // Avoid invalidating the iterator.
+        BBI = SI->getNextNonDebugInstruction()->getIterator();
+        eraseInstruction(SI);
+        eraseInstruction(LI);
+        ++NumMemCpyInstr;
+        return true;
+      }
+    }
   }
 
   return false;
@@ -1408,6 +1426,138 @@ bool MemCpyOptPass::performMemCpyToMemSetOptzn(MemCpyInst *MemCpy,
   return true;
 }
 
+// TODO: Write doc comments
+bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
+                                          AllocaInst *DestAlloca,
+                                          AllocaInst *SrcAlloca,
+                                          uint64_t Size) {
+  LLVM_DEBUG(dbgs() << "Stack Move: Attempting to optimize:\n"
+                    << *Store << "\n");
+
+  // Make sure the two allocas are in the same address space.
+  if (SrcAlloca->getAddressSpace() != DestAlloca->getAddressSpace()) {
+    LLVM_DEBUG(dbgs() << "Stack Move: Address space mismatch\n");
+    return false;
+  }
+
+  // 1. Check that copy is full. Calculate the static size of the allocas to be
+  // merged, bail out if we can't.
+  const DataLayout &DL = DestAlloca->getModule()->getDataLayout();
+  std::optional<TypeSize> SrcSize = SrcAlloca->getAllocationSize(DL);
+  if (!SrcSize || SrcSize->isScalable() || Size != SrcSize->getFixedValue()) {
+    LLVM_DEBUG(dbgs() << "Stack Move: Source alloca size mismatch\n");
+    return false;
+  }
+  std::optional<TypeSize> DestSize = DestAlloca->getAllocationSize(DL);
+  if (!DestSize || DestSize->isScalable() ||
+      Size != DestSize->getFixedValue()) {
+    LLVM_DEBUG(dbgs() << "Stack Move: Destination alloca size mismatch\n");
+    return false;
+  }
+
+  // 2. Check that src and dest are never captured, unescaped allocas.
+  if (llvm::PointerMayBeCaptured(SrcAlloca, /* ReturnCaptures=*/true,
+                                 /* StoreCaptures= */ true) ||
+      llvm::PointerMayBeCaptured(DestAlloca, /* ReturnCaptures=*/true,
+                                 /* StoreCaptures= */ true))
+    return false;
+
+  // 3. Check that dest has no Mod, except full size lifetime intrinsics, from
+  // the alloca to the Store. Collect lifetime markers and first/last users for
+  // shrink wrap the lifetimes.
+  SmallVector<IntrinsicInst *, 4> LifetimeMarkers;
+  // TODO: non instruction user? -> ConstantExpr. care?
+  std::optional<Instruction *> FirstUser, LastUser;
+  auto DestLoc = MemoryLocation(DestAlloca, LocationSize::precise(Size));
+  bool DestMod = false, DestRef = false;
+  // TODO: collect noailas metadata inst
+  for (User *U : DestAlloca->users()) {
+    if (auto *I = dyn_cast<Instruction>(U)) {
+      if (!FirstUser || I->comesBefore(*FirstUser))
+        FirstUser = I;
+      if (!LastUser || (*LastUser)->comesBefore(I))
+        LastUser = I;
+      if (auto *II = dyn_cast<IntrinsicInst>(I);
+          II && II->isLifetimeStartOrEnd()) {
+        int64_t Size = cast<ConstantInt>(II->getArgOperand(0))->getSExtValue();
+        if (Size < 0 || Size == DestSize) {
+          LifetimeMarkers.push_back(II);
+          continue;
+        }
+      }
+      ModRefInfo Res = AA->getModRefInfo(I, DestLoc);
+      if (I->comesBefore(Store) && isModSet(Res))
+        return false;
+      DestMod |= isModSet(Res);
+      DestRef |= isRefSet(Res);
+    }
+  }
+
+  // 3. Check that, from the after the Store to the end of the BB,
+  // 3-1. if the dest has any Mod, src has no Ref, and
+  // 3-2. if the dest has any Ref, src has no Mod.
+  auto SrcLoc = MemoryLocation(SrcAlloca, LocationSize::precise(Size));
+  for (User *U : SrcAlloca->users()) {
+    if (auto *I = dyn_cast<Instruction>(U)) {
+      if (!FirstUser || I->comesBefore(*FirstUser))
+        FirstUser = I;
+      if (!LastUser || (*LastUser)->comesBefore(I))
+        LastUser = I;
+      if (I->comesBefore(Store) || I == Store)
+        continue;
+      if (auto *II = dyn_cast<IntrinsicInst>(I);
+          II && II->isLifetimeStartOrEnd()) {
+        int64_t Size = cast<ConstantInt>(II->getArgOperand(0))->getSExtValue();
+        if (Size < 0 || Size == SrcSize) {
+          LifetimeMarkers.push_back(II);
+          continue;
+        }
+      }
+      ModRefInfo Res = AA->getModRefInfo(I, SrcLoc);
+      if ((DestMod && isRefSet(Res)) || (DestRef && isModSet(Res)))
+        return false;
+    }
+  }
+
+  // We can do the transformation. First, Remove all existing lifetime markers.
+  // FIXME: Currently this doesn't erase instructions. why?
+  for (IntrinsicInst *II : LifetimeMarkers)
+    eraseInstruction(II);
+
+  // Do "shrink wrap" the lifetimes.
+  // FIXME: More existing attrs for new lifetime intrinsics
+  LLVMContext &C = SrcAlloca->getContext();
+  IRBuilder<> Builder(C);
+
+  ConstantInt *AllocaSize =
+      cast<ConstantInt>(ConstantInt::get(Type::getInt64Ty(C), Size));
+  Builder.SetInsertPoint((*FirstUser)->getParent(),
+                         (*FirstUser)->getIterator());
+  auto *NewStart = Builder.CreateLifetimeStart(SrcAlloca, AllocaSize);
+  NewStart->addParamAttr(1, Attribute::NoCapture);
+
+  Builder.SetInsertPoint((*LastUser)->getParent(),
+                         ++(*LastUser)->getIterator());
+  auto *NewEnd = Builder.CreateLifetimeEnd(SrcAlloca, AllocaSize);
+  NewEnd->addParamAttr(1, Attribute::NoCapture);
+
+  // Align the allocas appropriately.
+  SrcAlloca->setAlignment(
+      std::max(SrcAlloca->getAlign(), DestAlloca->getAlign()));
+
+  // Merge the two allocas.
+  DestAlloca->replaceAllUsesWith(SrcAlloca);
+
+  // Drop metadata on the source alloca.
+  SrcAlloca->dropUnknownNonDebugMetadata();
+
+  // TODO: remove all noalias metadata from src alloca.
+
+  LLVM_DEBUG(dbgs() << "Stack Move: Performed staack-move optimization\n");
+  NumStackMove++;
+  return false;
+}
+
 /// Perform simplification of memcpy's.  If we have memcpy A
 /// which copies X to Y, and memcpy B which copies Y to Z, then we can rewrite
 /// B to be a memcpy from X to Z (or potentially a memmove, depending on
@@ -1488,8 +1638,10 @@ bool MemCpyOptPass::processMemCpy(MemCpyInst *M, BasicBlock::iterator &BBI) {
           }
         }
       }
-      if (auto *MDep = dyn_cast<MemCpyInst>(MI))
-        return processMemCpyMemCpyDependence(M, MDep, BAA);
+      if (auto *MDep = dyn_cast<MemCpyInst>(MI)) {
+        if (processMemCpyMemCpyDependence(M, MDep, BAA))
+          return true;
+      }
       if (auto *MDep = dyn_cast<MemSetInst>(MI)) {
         if (performMemCpyToMemSetOptzn(M, MDep, BAA)) {
           LLVM_DEBUG(dbgs() << "Converted memcpy to memset\n");
@@ -1506,6 +1658,26 @@ bool MemCpyOptPass::processMemCpy(MemCpyInst *M, BasicBlock::iterator &BBI) {
       ++NumMemCpyInstr;
       return true;
     }
+  }
+
+  // If the transfer is from a stack slot to a stack slot, then we may be able
+  // to perform the stack-move optimization. See the comments in
+  // performStackMoveOptzn() for more details.
+  AllocaInst *DestAlloca = dyn_cast<AllocaInst>(M->getDest());
+  if (DestAlloca == nullptr)
+    return false;
+  AllocaInst *SrcAlloca = dyn_cast<AllocaInst>(M->getSource());
+  if (SrcAlloca == nullptr)
+    return false;
+  ConstantInt *Len = dyn_cast<ConstantInt>(M->getLength());
+  if (Len == nullptr)
+    return false;
+  if (performStackMoveOptzn(M, M, DestAlloca, SrcAlloca, Len->getZExtValue())) {
+    // Avoid invalidating the iterator.
+    BBI = M->getNextNonDebugInstruction()->getIterator();
+    eraseInstruction(M);
+    ++NumMemCpyInstr;
+    return true;
   }
 
   return false;
