@@ -737,7 +737,7 @@ bool MemCpyOptPass::processStoreOfLoad(StoreInst *SI, LoadInst *LI,
   if (auto *DestAlloca = dyn_cast<AllocaInst>(SI->getPointerOperand())) {
     if (auto *SrcAlloca = dyn_cast<AllocaInst>(LI->getPointerOperand())) {
       if (performStackMoveOptzn(LI, SI, DestAlloca, SrcAlloca,
-                                DL.getTypeStoreSize(T))) {
+                                DL.getTypeStoreSize(T), BAA)) {
         // Avoid invalidating the iterator.
         BBI = SI->getNextNonDebugInstruction()->getIterator();
         eraseInstruction(SI);
@@ -1429,8 +1429,8 @@ bool MemCpyOptPass::performMemCpyToMemSetOptzn(MemCpyInst *MemCpy,
 // TODO: Write doc comments
 bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
                                           AllocaInst *DestAlloca,
-                                          AllocaInst *SrcAlloca,
-                                          uint64_t Size) {
+                                          AllocaInst *SrcAlloca, uint64_t Size,
+                                          BatchAAResults &BAA) {
   LLVM_DEBUG(dbgs() << "Stack Move: Attempting to optimize:\n"
                     << *Store << "\n");
 
@@ -1507,7 +1507,7 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
           continue;
         }
       }
-      ModRefInfo Res = AA->getModRefInfo(I, DestLoc);
+      ModRefInfo Res = BAA.getModRefInfo(I, DestLoc);
       if (DT->dominates(I, Store) && isModSet(Res))
         return false;
       DestMod |= isModSet(Res);
@@ -1525,7 +1525,7 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
         return false;
       if (!FirstUser || DT->dominates(I, FirstUser))
         FirstUser = I;
-      //  FIXME: this is incorrect, this should be post dominator
+      //  FIXME: For multi basicblock, this should be post dominator
       if (!LastUser || LastUser->comesBefore(I))
         LastUser = I;
       if (I->isLifetimeStartOrEnd()) {
@@ -1539,7 +1539,7 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
       // ignored.
       if (DT->dominates(I, Load) || I == Load || I == Store)
         continue;
-      ModRefInfo Res = AA->getModRefInfo(I, SrcLoc);
+      ModRefInfo Res = BAA.getModRefInfo(I, SrcLoc);
       if ((DestMod && isRefSet(Res)) || (DestRef && isModSet(Res)))
         return false;
     }
@@ -1696,7 +1696,8 @@ bool MemCpyOptPass::processMemCpy(MemCpyInst *M, BasicBlock::iterator &BBI) {
   ConstantInt *Len = dyn_cast<ConstantInt>(M->getLength());
   if (Len == nullptr)
     return false;
-  if (performStackMoveOptzn(M, M, DestAlloca, SrcAlloca, Len->getZExtValue())) {
+  if (performStackMoveOptzn(M, M, DestAlloca, SrcAlloca, Len->getZExtValue(),
+                            BAA)) {
     // Avoid invalidating the iterator.
     // TODO: consider use increment operator
     BBI = M->getNextNonDebugInstruction()->getIterator();
