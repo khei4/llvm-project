@@ -1456,73 +1456,79 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
   }
 
   // 2. Check that src and dest are never captured, unescaped allocas.
-  if (llvm::PointerMayBeCaptured(SrcAlloca, /* ReturnCaptures=*/true,
-                                 /* StoreCaptures= */ true) ||
-      llvm::PointerMayBeCaptured(DestAlloca, /* ReturnCaptures=*/true,
-                                 /* StoreCaptures= */ true))
+  if (PointerMayBeCaptured(SrcAlloca, /* ReturnCaptures=*/true,
+                           /* StoreCaptures= */ true) ||
+      PointerMayBeCaptured(DestAlloca, /* ReturnCaptures=*/true,
+                           /* StoreCaptures= */ true))
     return false;
 
   // 3. Check that dest has no Mod, except full size lifetime intrinsics, from
   // the alloca to the Store. Collect lifetime markers and first/last users for
   // shrink wrap the lifetimes.
-  SmallVector<IntrinsicInst *, 4> LifetimeMarkers;
+  SmallVector<Instruction *, 4> LifetimeMarkers;
   // TODO: non instruction user? -> ConstantExpr. care?
-  std::optional<Instruction *> FirstUser, LastUser;
-  auto DestLoc = MemoryLocation(DestAlloca, LocationSize::precise(Size));
+  Instruction *FirstUser = nullptr, *LastUser = nullptr;
+  MemoryLocation DestLoc(DestAlloca, LocationSize::precise(Size));
   bool DestMod = false, DestRef = false;
   // TODO: collect noailas metadata inst
   for (User *U : DestAlloca->users()) {
     if (auto *I = dyn_cast<Instruction>(U)) {
-      if (!FirstUser || I->comesBefore(*FirstUser))
+      if (!FirstUser || DT->dominates(I, FirstUser))
         FirstUser = I;
-      if (!LastUser || (*LastUser)->comesBefore(I))
+      if (!LastUser || DT->dominates(LastUser, I))
         LastUser = I;
-      if (auto *II = dyn_cast<IntrinsicInst>(I);
-          II && II->isLifetimeStartOrEnd()) {
-        int64_t Size = cast<ConstantInt>(II->getArgOperand(0))->getSExtValue();
+      if (I->isLifetimeStartOrEnd()) {
+        // TODO: Write the why we can remove intrinsics, roughly undef value
+        // could be overwritten.
+        // We treat a call to a lifetime intrinsic that covers the entire alloca
+        // as a definition, since both llvm.lifetime.start and llvm.lifetime.end
+        // intrinsics conceptually fill all the bytes of the alloca with an
+        // undefined value. We also note these locations of these intrinsic
+        // calls so that we can delete them later if the optimization succeeds.
+        int64_t Size = cast<ConstantInt>(I->getOperand(0))->getSExtValue();
         if (Size < 0 || Size == DestSize) {
-          LifetimeMarkers.push_back(II);
+          LifetimeMarkers.push_back(I);
           continue;
         }
       }
       ModRefInfo Res = AA->getModRefInfo(I, DestLoc);
-      if (I->comesBefore(Store) && isModSet(Res))
+      if (DT->dominates(I, Store) && isModSet(Res))
         return false;
       DestMod |= isModSet(Res);
       DestRef |= isRefSet(Res);
     }
   }
 
-  // 3. Check that, from the after the Store to the end of the BB,
+  // 3. Check that, from the after the Load to the end of the BB,
   // 3-1. if the dest has any Mod, src has no Ref, and
-  // 3-2. if the dest has any Ref, src has no Mod.
-  auto SrcLoc = MemoryLocation(SrcAlloca, LocationSize::precise(Size));
+  // 3-2. if the dest has any Ref, src has no Mod except full-sized lifetimes.
+  MemoryLocation SrcLoc(SrcAlloca, LocationSize::precise(Size));
   for (User *U : SrcAlloca->users()) {
     if (auto *I = dyn_cast<Instruction>(U)) {
-      if (!FirstUser || I->comesBefore(*FirstUser))
+      if (!FirstUser || DT->dominates(I, FirstUser))
         FirstUser = I;
-      if (!LastUser || (*LastUser)->comesBefore(I))
+      if (!LastUser || DT->dominates(LastUser, I))
         LastUser = I;
-      if (I->comesBefore(Store) || I == Store)
-        continue;
-      if (auto *II = dyn_cast<IntrinsicInst>(I);
-          II && II->isLifetimeStartOrEnd()) {
-        int64_t Size = cast<ConstantInt>(II->getArgOperand(0))->getSExtValue();
+      if (I->isLifetimeStartOrEnd()) {
+        int64_t Size = cast<ConstantInt>(I->getOperand(0))->getSExtValue();
         if (Size < 0 || Size == SrcSize) {
-          LifetimeMarkers.push_back(II);
+          LifetimeMarkers.push_back(I);
           continue;
         }
       }
+      // Any ModRef before Load doesn't matter, also Load and Store can be
+      // ignored.
+      if (DT->dominates(I, Load) || I == Load || I == Store)
+        continue;
       ModRefInfo Res = AA->getModRefInfo(I, SrcLoc);
       if ((DestMod && isRefSet(Res)) || (DestRef && isModSet(Res)))
         return false;
     }
   }
 
+  // TODO: reorder by original order for dertermined transformation.
   // We can do the transformation. First, Remove all existing lifetime markers.
   // FIXME: Currently this doesn't erase instructions. why?
-  for (IntrinsicInst *II : LifetimeMarkers)
-    eraseInstruction(II);
 
   // Do "shrink wrap" the lifetimes.
   // FIXME: More existing attrs for new lifetime intrinsics
@@ -1531,15 +1537,14 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
 
   ConstantInt *AllocaSize =
       cast<ConstantInt>(ConstantInt::get(Type::getInt64Ty(C), Size));
-  Builder.SetInsertPoint((*FirstUser)->getParent(),
-                         (*FirstUser)->getIterator());
-  auto *NewStart = Builder.CreateLifetimeStart(SrcAlloca, AllocaSize);
-  NewStart->addParamAttr(1, Attribute::NoCapture);
+  Builder.SetInsertPoint(FirstUser->getParent(), FirstUser->getIterator());
+  Builder.CreateLifetimeStart(SrcAlloca, AllocaSize);
 
-  Builder.SetInsertPoint((*LastUser)->getParent(),
-                         ++(*LastUser)->getIterator());
-  auto *NewEnd = Builder.CreateLifetimeEnd(SrcAlloca, AllocaSize);
-  NewEnd->addParamAttr(1, Attribute::NoCapture);
+  Builder.SetInsertPoint(LastUser->getParent(), ++LastUser->getIterator());
+  Builder.CreateLifetimeEnd(SrcAlloca, AllocaSize);
+
+  for (Instruction *I : LifetimeMarkers)
+    eraseInstruction(I);
 
   // Align the allocas appropriately.
   SrcAlloca->setAlignment(
@@ -1555,7 +1560,7 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
 
   LLVM_DEBUG(dbgs() << "Stack Move: Performed staack-move optimization\n");
   NumStackMove++;
-  return false;
+  return true;
 }
 
 /// Perform simplification of memcpy's.  If we have memcpy A
@@ -1663,17 +1668,18 @@ bool MemCpyOptPass::processMemCpy(MemCpyInst *M, BasicBlock::iterator &BBI) {
   // If the transfer is from a stack slot to a stack slot, then we may be able
   // to perform the stack-move optimization. See the comments in
   // performStackMoveOptzn() for more details.
-  AllocaInst *DestAlloca = dyn_cast<AllocaInst>(M->getDest());
-  if (DestAlloca == nullptr)
+  auto *DestAlloca = dyn_cast<AllocaInst>(M->getDest());
+  if (!DestAlloca)
     return false;
-  AllocaInst *SrcAlloca = dyn_cast<AllocaInst>(M->getSource());
-  if (SrcAlloca == nullptr)
+  auto *SrcAlloca = dyn_cast<AllocaInst>(M->getSource());
+  if (!SrcAlloca)
     return false;
   ConstantInt *Len = dyn_cast<ConstantInt>(M->getLength());
   if (Len == nullptr)
     return false;
   if (performStackMoveOptzn(M, M, DestAlloca, SrcAlloca, Len->getZExtValue())) {
     // Avoid invalidating the iterator.
+    // TODO: consider use increment operator
     BBI = M->getNextNonDebugInstruction()->getIterator();
     eraseInstruction(M);
     ++NumMemCpyInstr;
