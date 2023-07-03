@@ -1462,7 +1462,12 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
     return false;
   }
 
-  // 2. Check that src and dest are never captured, unescaped allocas.
+  // 2-1. Check that src and dest are static allocas, which is irrelevant to
+  // stacksave/stackrestore.
+  if (!SrcAlloca->isStaticAlloca() || !DestAlloca->isStaticAlloca())
+    return false;
+
+  // 2-2. Check that src and dest are never captured, unescaped allocas.
   if (PointerMayBeCaptured(SrcAlloca, /* ReturnCaptures=*/true,
                            /* StoreCaptures= */ true) ||
       PointerMayBeCaptured(DestAlloca, /* ReturnCaptures=*/true,
