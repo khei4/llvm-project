@@ -1434,6 +1434,13 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
   LLVM_DEBUG(dbgs() << "Stack Move: Attempting to optimize:\n"
                     << *Store << "\n");
 
+  // TODO: implement multi BasicBlock transformation, we need to use
+  // PostDominator and we would be able to relax the condition for each blocks.
+  if (SrcAlloca->getParent() != DestAlloca->getParent()) {
+    LLVM_DEBUG(dbgs() << "Stack Move: Not single basic block\n");
+    return false;
+  }
+
   // Make sure the two allocas are in the same address space.
   if (SrcAlloca->getAddressSpace() != DestAlloca->getAddressSpace()) {
     LLVM_DEBUG(dbgs() << "Stack Move: Address space mismatch\n");
@@ -1473,9 +1480,13 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
   // TODO: collect noailas metadata inst
   for (User *U : DestAlloca->users()) {
     if (auto *I = dyn_cast<Instruction>(U)) {
+      // TOOD: Implement multi BasicBlock transformation, we would need to use
+      // PostDominator for LastUser.
+      if (DestAlloca->getParent() != I->getParent())
+        return false;
       if (!FirstUser || DT->dominates(I, FirstUser))
         FirstUser = I;
-      if (!LastUser || DT->dominates(LastUser, I))
+      if (!LastUser || LastUser->comesBefore(I))
         LastUser = I;
       if (I->isLifetimeStartOrEnd()) {
         // TODO: Write the why we can remove intrinsics, roughly undef value
@@ -1505,9 +1516,12 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
   MemoryLocation SrcLoc(SrcAlloca, LocationSize::precise(Size));
   for (User *U : SrcAlloca->users()) {
     if (auto *I = dyn_cast<Instruction>(U)) {
+      if (DestAlloca->getParent() != I->getParent())
+        return false;
       if (!FirstUser || DT->dominates(I, FirstUser))
         FirstUser = I;
-      if (!LastUser || DT->dominates(LastUser, I))
+      //  FIXME: this is incorrect, this should be post dominator
+      if (!LastUser || LastUser->comesBefore(I))
         LastUser = I;
       if (I->isLifetimeStartOrEnd()) {
         int64_t Size = cast<ConstantInt>(I->getOperand(0))->getSExtValue();
