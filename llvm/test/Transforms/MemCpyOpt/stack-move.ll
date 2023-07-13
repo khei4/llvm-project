@@ -381,10 +381,92 @@ define void @src_mod_dest_mod_after_copy() {
   ret void
 }
 
+; TODO: merge allocas for bb-separated, but logically straight
+define void @multi_bb_memcpy(i1 %b) {
+; CHECK-LABEL: define void @multi_bb_memcpy
+; CHECK-SAME: (i1 [[B:%.*]]) {
+; CHECK-NEXT:    [[SRC:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    [[DEST:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 4, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 4, ptr nocapture [[DEST]])
+; CHECK-NEXT:    store i32 42, ptr [[SRC]], align 4
+; CHECK-NEXT:    [[TMP1:%.*]] = call i32 @use_nocapture(ptr nocapture [[SRC]])
+; CHECK-NEXT:    br label [[BB0:%.*]]
+; CHECK:       bb0:
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[DEST]], ptr align 4 [[SRC]], i64 4, i1 false)
+; CHECK-NEXT:    br label [[BB1:%.*]]
+; CHECK:       bb1:
+; CHECK-NEXT:    [[TMP2:%.*]] = call i32 @use_nocapture(ptr nocapture [[DEST]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 4, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 4, ptr nocapture [[DEST]])
+; CHECK-NEXT:    ret void
+;
+  %src = alloca i32, align 4
+  %dest = alloca i32, align 4
+  call void @llvm.lifetime.start.p0(i64 4, ptr nocapture %src)
+  call void @llvm.lifetime.start.p0(i64 4, ptr nocapture %dest)
+  store i32 42, ptr %src
+  %1 = call i32 @use_nocapture(ptr nocapture %src)
+  br label %bb0
+
+bb0:
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dest, ptr align 4 %src, i64 4, i1 false)
+  br label %bb1
+
+bb1:
+  %2 = call i32 @use_nocapture(ptr nocapture %dest)
+  call void @llvm.lifetime.end.p0(i64 4, ptr nocapture %src)
+  call void @llvm.lifetime.end.p0(i64 4, ptr nocapture %dest)
+  ret void
+}
+
+
+; TODO: merge allocas for bb-separated, but logically straight
+define void @multi_bb_load_store(i1 %b) {
+; CHECK-LABEL: define void @multi_bb_load_store
+; CHECK-SAME: (i1 [[B:%.*]]) {
+; CHECK-NEXT:    [[SRC:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    [[DEST:%.*]] = alloca i32, align 4
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 4, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 4, ptr nocapture [[DEST]])
+; CHECK-NEXT:    store i32 42, ptr [[SRC]], align 4
+; CHECK-NEXT:    [[TMP1:%.*]] = call i32 @use_nocapture(ptr nocapture [[SRC]])
+; CHECK-NEXT:    [[SRC_VAL:%.*]] = load i32, ptr [[SRC]], align 4
+; CHECK-NEXT:    br label [[BB0:%.*]]
+; CHECK:       bb0:
+; CHECK-NEXT:    store i32 [[SRC_VAL]], ptr [[DEST]], align 4
+; CHECK-NEXT:    br label [[BB1:%.*]]
+; CHECK:       bb1:
+; CHECK-NEXT:    [[TMP2:%.*]] = call i32 @use_nocapture(ptr nocapture [[DEST]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 4, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 4, ptr nocapture [[DEST]])
+; CHECK-NEXT:    ret void
+;
+  %src = alloca i32, align 4
+  %dest = alloca i32, align 4
+  call void @llvm.lifetime.start.p0(i64 4, ptr nocapture %src)
+  call void @llvm.lifetime.start.p0(i64 4, ptr nocapture %dest)
+  store i32 42, ptr %src
+  %1 = call i32 @use_nocapture(ptr nocapture %src)
+
+  %src.val = load i32, ptr %src
+  br label %bb0
+
+bb0:
+  store i32 %src.val, ptr %dest
+  br label %bb1
+
+bb1:
+  %2 = call i32 @use_nocapture(ptr nocapture %dest)
+  call void @llvm.lifetime.end.p0(i64 4, ptr nocapture %src)
+  call void @llvm.lifetime.end.p0(i64 4, ptr nocapture %dest)
+  ret void
+}
+
 ; TODO: merge allocas for multi basicblocks, s.t. all copy-dominated
 ; uses are satisfy the condition.
-define void @multi_bb(i1 %b) {
-; CHECK-LABEL: define void @multi_bb
+define void @multi_bb_simple_br(i1 %b) {
+; CHECK-LABEL: define void @multi_bb_simple_br
 ; CHECK-SAME: (i1 [[B:%.*]]) {
 ; CHECK-NEXT:    [[SRC:%.*]] = alloca [[STRUCT_FOO:%.*]], align 4
 ; CHECK-NEXT:    [[DEST:%.*]] = alloca [[STRUCT_FOO]], align 4
