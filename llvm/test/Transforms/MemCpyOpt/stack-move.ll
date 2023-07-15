@@ -452,6 +452,7 @@ bb2:
   ret void
 }
 
+; TODO: merge allocas for multi basicblocks, s.t. all copy-dominated
 define ptr @multi_bb_loop(i32 %n) {
 ; CHECK-LABEL: define ptr @multi_bb_loop
 ; CHECK-SAME: (i32 [[N:%.*]]) {
@@ -492,6 +493,98 @@ loop_body:
 
 loop_exit:
   ret ptr %dest
+}
+
+
+; TODO: merge allocas for multi basicblocks s.t. copy unreachable 
+define void @multi_bb_unreachable_modref(i1 %b0) {
+; CHECK-LABEL: define void @multi_bb_simple_br
+; CHECK-SAME: (i1 [[B:%.*]]) {
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [[STRUCT_FOO:%.*]], align 4
+; CHECK-NEXT:    [[DEST:%.*]] = alloca [[STRUCT_FOO]], align 4
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 12, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 12, ptr nocapture [[DEST]])
+; CHECK-NEXT:    store [[STRUCT_FOO]] { i32 10, i32 20, i32 30 }, ptr [[SRC]], align 4
+; CHECK-NEXT:    [[TMP1:%.*]] = call i32 @use_nocapture(ptr nocapture noundef [[SRC]])
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[DEST]], ptr align 4 [[SRC]], i64 12, i1 false)
+; CHECK-NEXT:    br i1 [[B]], label [[BB0:%.*]], label [[BB1:%.*]]
+; CHECK:       bb0:
+; CHECK-NEXT:    [[TMP2:%.*]] = call i32 @use_nocapture(ptr nocapture noundef [[DEST]])
+; CHECK-NEXT:    br label [[BB2:%.*]]
+; CHECK:       bb1:
+; CHECK-NEXT:    [[TMP3:%.*]] = call i32 @use_nocapture(ptr nocapture noundef [[DEST]])
+; CHECK-NEXT:    br label [[BB2]]
+; CHECK:       bb2:
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 12, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 12, ptr nocapture [[DEST]])
+; CHECK-NEXT:    ret void
+;
+  %src = alloca %struct.Foo, align 4
+  %dest = alloca %struct.Foo, align 4
+  call void @llvm.lifetime.start.p0(i64 12, ptr nocapture %src)
+  call void @llvm.lifetime.start.p0(i64 12, ptr nocapture %dest)
+  store %struct.Foo { i32 10, i32 20, i32 30 }, ptr %src
+  %1 = call i32 @use_nocapture(ptr noundef nocapture %src)
+  br i1 %b0, label %bb0, label %exit
+
+exit:
+  %3 = call i32 @use_nocapture(ptr noundef nocapture %src)
+  ret void
+
+bb0:
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dest, ptr align 4 %src, i64 12, i1 false)
+  call void @llvm.lifetime.end.p0(i64 12, ptr nocapture %src)
+  call void @llvm.lifetime.end.p0(i64 12, ptr nocapture %dest)
+  ret void
+}
+
+
+; TODO: merge allocas for multi basicblocks s.t. copy unreachable 
+; the case copy isn't dominate
+define void @multi_bb_non_dominated(i1 %b0, i1 %b1) {
+; CHECK-LABEL: define void @multi_bb_simple_br
+; CHECK-SAME: (i1 [[B:%.*]]) {
+; CHECK-NEXT:    [[SRC:%.*]] = alloca [[STRUCT_FOO:%.*]], align 4
+; CHECK-NEXT:    [[DEST:%.*]] = alloca [[STRUCT_FOO]], align 4
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 12, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.start.p0(i64 12, ptr nocapture [[DEST]])
+; CHECK-NEXT:    store [[STRUCT_FOO]] { i32 10, i32 20, i32 30 }, ptr [[SRC]], align 4
+; CHECK-NEXT:    [[TMP1:%.*]] = call i32 @use_nocapture(ptr nocapture noundef [[SRC]])
+; CHECK-NEXT:    call void @llvm.memcpy.p0.p0.i64(ptr align 4 [[DEST]], ptr align 4 [[SRC]], i64 12, i1 false)
+; CHECK-NEXT:    br i1 [[B]], label [[BB0:%.*]], label [[BB1:%.*]]
+; CHECK:       bb0:
+; CHECK-NEXT:    [[TMP2:%.*]] = call i32 @use_nocapture(ptr nocapture noundef [[DEST]])
+; CHECK-NEXT:    br label [[BB2:%.*]]
+; CHECK:       bb1:
+; CHECK-NEXT:    [[TMP3:%.*]] = call i32 @use_nocapture(ptr nocapture noundef [[DEST]])
+; CHECK-NEXT:    br label [[BB2]]
+; CHECK:       bb2:
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 12, ptr nocapture [[SRC]])
+; CHECK-NEXT:    call void @llvm.lifetime.end.p0(i64 12, ptr nocapture [[DEST]])
+; CHECK-NEXT:    ret void
+;
+  %src = alloca %struct.Foo, align 4
+  %dest = alloca %struct.Foo, align 4
+  call void @llvm.lifetime.start.p0(i64 12, ptr nocapture %src)
+  call void @llvm.lifetime.start.p0(i64 12, ptr nocapture %dest)
+  store %struct.Foo { i32 10, i32 20, i32 30 }, ptr %src
+  %1 = call i32 @use_nocapture(ptr noundef nocapture %src)
+  br i1 %b0, label %bb0, label %bb1
+
+bb0:
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %dest, ptr align 4 %src, i64 12, i1 false)
+  br %bb2
+
+bb1:
+  %3 = call i32 @use_nocapture(ptr noundef nocapture %src)
+  %4 = call i32 @use_writeonly(ptr noundef nocapture %dest)
+  br %bb2
+
+bb2:
+  %5 = call i32 @use_nocapture(ptr noundef nocapture %src)
+  call void @llvm.lifetime.end.p0(i64 12, ptr nocapture %src)
+  call void @llvm.lifetime.end.p0(i64 12, ptr nocapture %dest)
+  ret void
 }
 
 ; Optimization failures follow:
