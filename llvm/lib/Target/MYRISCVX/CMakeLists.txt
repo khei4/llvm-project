@@ -2,6 +2,9 @@ add_llvm_component_group(MYRISCVX)
 set(LLVM_TARGET_DEFINITIONS MYRISCVX.td)
 
 tablegen(LLVM MYRISCVXGenRegisterInfo.inc -gen-register-info)
+tablegen(LLVM MYRISCVXGenInstrInfo.inc -gen-instr-info)
+tablegen(LLVM MYRISCVXGenSubtargetInfo.inc -gen-subtarget)
+tablegen(LLVM MYRISCVXGenMCPseudoLowering.inc -gen-pseudo-lowering)
 
 add_public_tablegen_target(MYRISCVXCommonTableGen)
 
