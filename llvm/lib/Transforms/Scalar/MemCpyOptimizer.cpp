@@ -56,6 +56,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <optional>
 
 using namespace llvm;
@@ -65,6 +67,11 @@ using namespace llvm;
 static cl::opt<bool> EnableMemCpyOptWithoutLibcalls(
     "enable-memcpyopt-without-libcalls", cl::Hidden,
     cl::desc("Enable memcpyopt even when libcalls are disabled"));
+static cl::opt<unsigned>
+    MemCpyOptStackMoveThreshold("memcpyopt-stack-move-threshold", cl::Hidden,
+                                cl::desc("Maximum number of basic blocks the "
+                                         "stack-move optimization may examine"),
+                                cl::init(16));
 
 STATISTIC(NumMemCpyInstr, "Number of memcpy instructions deleted");
 STATISTIC(NumMemSetInfer, "Number of memsets inferred");
@@ -1417,6 +1424,263 @@ bool MemCpyOptPass::performMemCpyToMemSetOptzn(MemCpyInst *MemCpy,
   return true;
 }
 
+// These helper classes are used for the stack-move optimization. See the
+// comments above performStackMoveOptzn() for more details.
+
+namespace {
+
+enum Liveness { LiveUse, LiveDef };
+struct InstCmp {
+  bool operator()(const Instruction *L, const Instruction *R) const {
+    return R->comesBefore(L);
+  };
+};
+
+using LiveDefOrUseInst = PointerIntPair<Instruction *, 1, Liveness>;
+
+// Tracks liveness on the basic block level. This is conservative; see the
+// comments above performStackMoveOptzn() for justification.
+class BasicBlockLiveness {
+
+  // Whether the alloca is live-in to the block (from predecessor basic blocks).
+  bool LiveIn = false;
+  // Whether the alloca is live-out from the block (to successor basic blocks).
+  bool LiveOut = false;
+  // Whether there's at least one use of the alloca in this basic block. This
+  // flag is important for detecting liveness conflicts, since the other
+  // information stored here isn't sufficient to determine that a use is present
+  // if a definition precedes it.
+  bool HasUse = false;
+
+  // Type for the Instruction and LiveUse or LiveDef. if true, then LiveDef
+  // The earliest definition or use we've seen, combined with the three bits
+  // below.
+  LiveDefOrUseInst FirstLiveUseOrDefInst;
+
+  // All LiveUse or LiveDef Instructions on this block.
+  std::map<Instruction *, Liveness, InstCmp> UseOrDefs;
+
+  // Records a first def or use instruction.
+  void setFirstLiveDefOrUseInst(Instruction *I, Liveness L) {
+    assert((!hasDefUseInst() ||
+            I->comesBefore(getFirstLiveUseOrDefInst().getPointer())) &&
+           "Tried to overwrite an earlier def or use with a later one!");
+    FirstLiveUseOrDefInst.setPointer(I);
+    FirstLiveUseOrDefInst.setInt(L);
+  }
+
+  void addLiveDefOrUseInst(Instruction *I, Liveness L) {
+    UseOrDefs.insert({I, L});
+  }
+
+  // Sets the flag which determines whether this block has a use.
+  void setHasUse(bool On) { HasUse = On; }
+
+public:
+  BasicBlockLiveness() : FirstLiveUseOrDefInst(nullptr) {}
+
+  // Returns the earliest definition or use we've seen in this block.
+  const LiveDefOrUseInst &getFirstLiveUseOrDefInst() const {
+    return FirstLiveUseOrDefInst;
+  }
+
+  // Returns the all LiveUses and LiveDefs.
+  std::map<Instruction *, Liveness, InstCmp> &getUseOrDefs() {
+    return UseOrDefs;
+  }
+
+  // Returns true if there's a definition or use of the memory in this block.
+  bool hasDefUseInst() const {
+    return FirstLiveUseOrDefInst.getPointer() != nullptr;
+  }
+  // Returns true if the memory is live-in to this block (i.e. live-out of a
+  // predecessor).
+  bool isLiveIn() const { return LiveIn; }
+  // Returns true if the memory is live-out of this block (i.e. live-in to a
+  // successor).
+  bool isLiveOut() const { return LiveOut; }
+  // Returns true if there is at least one use of the memory in this block.
+  bool hasUse() const { return HasUse; }
+  // Returns true if this alloca is live anywhere in this block or has
+  // at least one use in it. If this returns false, the alloca is
+  // guaranteed to be completely dead within this basic block.
+  bool isLiveAnywhereOrHasUses() const {
+    return isLiveIn() || isLiveOut() || hasUse();
+  }
+  // Adjusts the live-in flag for this block.
+  void setLiveIn(bool On) { LiveIn = On; }
+
+  // Adjusts the live-out flag for this block.
+  void setLiveOut(bool On) { LiveOut = On; }
+
+  // Records a new definition or use of the alloca being tracked within this
+  // basic block.
+  void update(Instruction *I, Liveness L) {
+    // Set use or def for the first instruction, BB is LiveIn if the first user
+    // is use.
+    if (!hasDefUseInst() ||
+        I->comesBefore(getFirstLiveUseOrDefInst().getPointer())) {
+      setFirstLiveDefOrUseInst(I, L);
+      setLiveIn(L == LiveUse);
+    }
+    if (L == LiveUse)
+      setHasUse(true);
+
+    addLiveDefOrUseInst(I, L);
+  }
+};
+
+} // namespace
+using BasicBlockLivenessMap = DenseMap<BasicBlock *, BasicBlockLiveness>;
+
+// Performs liveness dataflow analysis for an alloca at the basic block level as
+// part of the stack-move optimization.
+//
+// This implements the "backwards variable-at-a-time" variant of liveness
+// analysis, propagating liveness information backwards from uses until it sees
+// a basic block with a definition or one in which the variable is already
+// live-out. As implemented, this is a linear-time algorithm, because it only
+// visits every basic block at most once and the number of tracked variables is
+// constant (two--the source and destination of the memcpy).
+//
+// In order to avoid spending too much compile time, this operates on the level
+// of basic blocks instead of instructions, making it a conservative
+// analysis. See the comments in performStackMoveOptzn() for more details.
+//
+// Returns true if the analysis succeeded or false if it failed due to examining
+// too many basic blocks.
+static bool computeLiveness(BasicBlockLivenessMap &BBLivenessMap) {
+  // Start by initializing a worklist with all basic blocks that are live-in
+  // (i.e. they potentially need to propagate liveness to their predecessors).
+  SmallVector<BasicBlock *, 8> Worklist;
+  for (auto &[BB, BBLiveness] : BBLivenessMap) {
+    if (BBLiveness.getFirstLiveUseOrDefInst().getInt() == Liveness::LiveUse) {
+      BBLiveness.setLiveIn(true);
+      Worklist.push_back(BB);
+    }
+  }
+
+  // Iterate until we have no more blocks to process.
+  unsigned Count = 0;
+  while (!Worklist.empty()) {
+    BasicBlock *BB = Worklist.back();
+    Worklist.pop_back();
+
+    // Cap the number of basic blocks we examine in order to avoid blowing up
+    // compile time. The default threshold was empirically determined to be
+    // sufficient 90% of the time in the Rust compiler.
+    ++Count;
+    if (Count >= MemCpyOptStackMoveThreshold) {
+      LLVM_DEBUG(
+          dbgs()
+          << "Stack Move: Exceeded max basic block threshold, bailing\n");
+      return false;
+    }
+
+    // We know that the alloca must be live-in to this basic block, or else we
+    // wouldn't have added the block to the worklist in the first place.
+    assert(BBLivenessMap.lookup(BB).isLiveIn() &&
+           "Shouldn't have added a BB that wasn't live-in to the worklist!");
+
+    // Propagate liveness back to predecessors.
+    for (BasicBlock *Pred : predecessors(BB)) {
+      BasicBlockLiveness PredLiveness = BBLivenessMap.lookup(Pred);
+
+      // Skip predecessors in which the variable is already known to be
+      // live-out.
+      if (PredLiveness.isLiveOut())
+        continue;
+      PredLiveness.setLiveOut(true);
+
+      // Don't enqueue predecessors if they contain direct defs or uses of the
+      // variable. If a predecessor contains a use of the variable that
+      // dominates all the other uses or defs of the variable within that
+      // block, then we already added that predecessor to the worklist at the
+      // beginning of this procedure, so we don't need to add it again. If, on
+      // the other hand, the predecessor contains a definition of the variable
+      // that dominates all the other uses or defs of the variable within the
+      // block, then the predecessor won't propagate any liveness to *its*
+      // predecessors, so we don't need to enqueue it either.
+      if (!PredLiveness.hasDefUseInst()) {
+        // We know that this predecessor is a basic block that contains
+        // neither defs nor uses of the variable and in which the variable is
+        // live-out. So the variable must be live-in to this predecessor too.
+        PredLiveness.setLiveIn(true);
+        Worklist.push_back(Pred);
+      }
+
+      BBLivenessMap[Pred] = PredLiveness;
+    }
+  }
+
+  return true;
+}
+
+bool checkInstructionLevelLivenessConflict(
+    BasicBlockLivenessMap &DestLivenessMap,
+    BasicBlockLivenessMap &SrcLivenessMap, BasicBlock *BB, Instruction *Load,
+    Instruction *Store) {
+  // Check liveness inside the BB, check the uses in the order of appearance.
+  auto SrcBBLiveness = SrcLivenessMap.lookup(BB);
+  auto DestBBLiveness = DestLivenessMap.lookup(BB);
+  bool SrcLive = SrcBBLiveness.isLiveOut();
+  bool DestLive = DestBBLiveness.isLiveOut();
+
+  auto &SrcUseOrDefs = SrcBBLiveness.getUseOrDefs();
+  auto &DestUseOrDefs = DestBBLiveness.getUseOrDefs();
+
+  auto AllUseOrDefs = SrcUseOrDefs;
+  // FIXME: memcpy (Store, Load) is duplicated, so sorting is UB.
+  AllUseOrDefs.insert(DestUseOrDefs.begin(), DestUseOrDefs.end());
+  dbgs() << "user from reverse\n";
+  // TODO: to merge safely we need to mark and erase DestDef during Src is
+  // alive.
+  for (const auto &[I, L] : AllUseOrDefs) {
+    dbgs() << "Liveness Inst = :";
+    I->print(dbgs());
+    dbgs() << "\n is " << (L == Liveness::LiveDef ? "Def" : "Use") << "\n";
+
+    // FIXME: is this OK to exclude Load and store?
+    if (DestLive && SrcLive && I != Load && I != Store) {
+      LLVM_DEBUG(
+          dbgs() << "Stack Move: Detected liveness conflict inside the basic "
+                    "block \n  Instruction: "
+                 << I << "\n");
+      return false;
+    }
+    // FIXME: these equality check takes linear time, also failed because IL is
+    // not instruction but with LivenessInfo
+    if (SrcUseOrDefs.count(I))
+      SrcLive = SrcUseOrDefs[I] == Liveness::LiveUse;
+
+    if (DestUseOrDefs.count(I))
+      DestLive = DestUseOrDefs[I] == Liveness::LiveUse;
+    dbgs() << "after that SrcLive=" << SrcLive << " DestLive=" << DestLive
+           << "\n";
+  }
+  return true;
+}
+
+bool checkBBLevelLivenessConflict(BasicBlockLivenessMap &DestLivenessMap,
+                                  BasicBlockLivenessMap &SrcLivenessMap,
+                                  Instruction *Load, Instruction *Store) {
+  // Check for liveness conflicts on the basic block level (with the exception
+  // of the basic block containing the memcpy).
+  for (const auto &[BB, DestLiveness] : DestLivenessMap) {
+    if (DestLiveness.isLiveAnywhereOrHasUses() &&
+        SrcLivenessMap.lookup(BB).isLiveAnywhereOrHasUses()) {
+      LLVM_DEBUG(
+          dbgs() << "Stack Move: Detected Basic Block liveness conflict, "
+                    "\n  Basic Block: "
+                 << BB->getNameOrAsOperand() << "\n");
+      if (!checkInstructionLevelLivenessConflict(
+              DestLivenessMap, SrcLivenessMap, BB, Load, Store))
+        return false;
+    }
+  }
+  return true;
+}
+
 using InsertionPt = PointerUnion<Instruction *, BasicBlock *>;
 /// Find the nearest Instruction or BasicBlock that post-dominates both I1 and
 /// I2.
@@ -1499,6 +1763,7 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
   Instruction *DomI = nullptr;
   InsertionPt PDom = nullptr;
   SmallSet<Instruction *, 4> NoAliasInstrs;
+  BasicBlockLivenessMap SrcLivenessMap, DestLivenessMap;
 
   // Recursively track the user and check whether modified alias exist.
   auto IsDereferenceableOrNull = [](Value *V, const DataLayout &DL) -> bool {
@@ -1506,9 +1771,8 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
     return V->getPointerDereferenceableBytes(DL, CanBeNull, CanBeFreed);
   };
 
-  auto CaptureTrackingWithModRef =
-      [&](Instruction *AI,
-          function_ref<bool(Instruction *)> ModRefCallback) -> bool {
+  auto CaptureTrackingWithLivenessAnalysis =
+      [&](Instruction *AI, BasicBlockLivenessMap &BBLivenessMap) -> bool {
     SmallVector<Instruction *, 8> Worklist;
     Worklist.push_back(AI);
     unsigned MaxUsesToExplore = getDefaultMaxUsesToExploreForCaptureTracking();
@@ -1528,8 +1792,15 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
           continue;
         switch (DetermineUseCaptureKind(U, IsDereferenceableOrNull)) {
         case UseCaptureKind::MAY_CAPTURE:
+          LLVM_DEBUG({
+            dbgs() << "Stack Move: Alloca may be captured:";
+            dbgs() << "\n" << U;
+            dbgs() << "\n";
+          });
           return false;
         case UseCaptureKind::PASSTHROUGH:
+          // FIXME: should we check liveness on this? I guess not, because these
+          // are generally ignorable like gep.
           // Instructions cannot have non-instruction users.
           Worklist.push_back(cast<Instruction>(U.getUser()));
           continue;
@@ -1542,22 +1813,56 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
             if (PDom)
               PDom = findNearestCommonPostDominator(PDom, UI, PDT);
           }
-          if (UI->isLifetimeStartOrEnd()) {
-            // We note the locations of these intrinsic calls so that we can
-            // delete them later if the optimization succeeds, this is safe
-            // since both llvm.lifetime.start and llvm.lifetime.end intrinsics
-            // practically fill all the bytes of the alloca with an undefined
-            // value, although conceptually marked as alive/dead.
-            int64_t Size = cast<ConstantInt>(UI->getOperand(0))->getSExtValue();
-            if (Size < 0 || Size == DestSize) {
-              LifetimeMarkers.push_back(UI);
+
+          // If an instruction overwrites all bytes of the alloca, it's a
+          // definition, not a use. Detect those cases here.
+          if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(UI)) {
+            if (II->isLifetimeStartOrEnd()) {
+              // We treat a call to a lifetime intrinsic that covers the entire
+              // alloca as a definition, since both llvm.lifetime.start and
+              // llvm.lifetime.end intrinsics conceptually fill all the bytes of
+              // the alloca with an undefined value. We also note these
+              // locations of these intrinsic calls so that we can delete them
+              // later if the optimization succeeds.
+              int64_t Size =
+                  cast<ConstantInt>(II->getArgOperand(0))->getSExtValue();
+
+              if (Size < 0 || uint64_t(Size) == SrcSize) {
+                BBLivenessMap[II->getParent()].update(II, Liveness::LiveDef);
+                LifetimeMarkers.push_back(II);
+                continue;
+              }
+            } else if (MemIntrinsic *MI = dyn_cast<MemIntrinsic>(II)) {
+              if (MI->getArgOperandNo(&U) == 0) {
+                if (ConstantInt *CI = dyn_cast<ConstantInt>(MI->getLength())) {
+                  if (CI->getZExtValue() == (*SrcSize).getFixedValue()) {
+
+                    // Memcpy, memmove, and memset instructions that fill every
+                    // byte of the alloca are definitions.
+                    BBLivenessMap[MI->getParent()].update(MI,
+                                                          Liveness::LiveDef);
+                    // TODO: remove dupulication of the noalias insertion
+                    if (MI->hasMetadata(LLVMContext::MD_noalias))
+                      NoAliasInstrs.insert(MI);
+                    continue;
+                  }
+                }
+              }
+            }
+          } else if (StoreInst *SI = dyn_cast<StoreInst>(UI)) {
+            // Stores that overwrite all bytes of the alloca are definitions.
+            if (U.getOperandNo() == 1 &&
+                DL.getTypeStoreSize(SI->getValueOperand()->getType()) ==
+                    (*SrcSize).getFixedValue()) {
+              BBLivenessMap[SI->getParent()].update(SI, Liveness::LiveDef);
+              if (SI->hasMetadata(LLVMContext::MD_noalias))
+                NoAliasInstrs.insert(SI);
               continue;
             }
           }
+          BBLivenessMap[UI->getParent()].update(UI, Liveness::LiveUse);
           if (UI->hasMetadata(LLVMContext::MD_noalias))
             NoAliasInstrs.insert(UI);
-          if (!ModRefCallback(UI))
-            return false;
         }
         }
       }
@@ -1565,75 +1870,46 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
     return true;
   };
 
-  // Check that dest has no Mod/Ref, from the alloca to the Store, except full
-  // size lifetime intrinsics. And collect modref inst for the reachability
-  // check.
-  ModRefInfo DestModRef = ModRefInfo::NoModRef;
-  MemoryLocation DestLoc(DestAlloca, LocationSize::precise(Size));
-  SmallVector<BasicBlock *, 8> ReachabilityWorklist;
-  auto DestModRefCallback = [&](Instruction *UI) -> bool {
-    // We don't care about the store itself.
-    if (UI == Store)
-      return true;
-    ModRefInfo Res = BAA.getModRefInfo(UI, DestLoc);
-    DestModRef |= Res;
-    if (isModOrRefSet(Res)) {
-      // Instructions reachability checks.
-      // FIXME: adding the Instruction version isPotentiallyReachableFromMany on
-      // lib/Analysis/CFG.cpp (currently only for BasicBlocks) might be helpful.
-      if (UI->getParent() == Store->getParent()) {
-        // The same block case is special because it's the only time we're
-        // looking within a single block to see which instruction comes first.
-        // Once we start looking at multiple blocks, the first instruction of
-        // the block is reachable, so we only need to determine reachability
-        // between whole blocks.
-        BasicBlock *BB = UI->getParent();
+  if (!CaptureTrackingWithLivenessAnalysis(DestAlloca, DestLivenessMap) ||
+      !CaptureTrackingWithLivenessAnalysis(SrcAlloca, SrcLivenessMap))
+    return false;
 
-        // If A comes before B, then B is definitively reachable from A.
-        if (UI->comesBefore(Store))
-          return false;
+  if (!computeLiveness(DestLivenessMap) || !computeLiveness(SrcLivenessMap))
+    return false;
 
-        // If the user's parent block is entry, no predecessor exists.
-        if (BB->isEntryBlock())
-          return true;
-
-        // Otherwise, continue doing the normal per-BB CFG walk.
-        ReachabilityWorklist.append(succ_begin(BB), succ_end(BB));
-      } else {
-        ReachabilityWorklist.push_back(UI->getParent());
-      }
+  dbgs() << "Liveness LiveUse = :" << Liveness::LiveUse << '\n';
+  dbgs() << "Liveness LiveDef = :" << Liveness::LiveDef << '\n';
+  for (auto &[BB, DestLiveness] : DestLivenessMap) {
+    for (const auto &[I, L] : DestLiveness.getUseOrDefs()) {
+      dbgs() << "Dest Liveness Inst = :";
+      I->print(dbgs());
+      dbgs() << "\n is " << (L ? "Def" : "Use") << "\n";
     }
-    return true;
-  };
+  }
 
-  if (!CaptureTrackingWithModRef(DestAlloca, DestModRefCallback))
+  for (auto &[BB, SrcLiveness] : SrcLivenessMap) {
+    for (const auto &[I, L] : SrcLiveness.getUseOrDefs()) {
+      dbgs() << "Src Liveness Inst = :";
+      I->print(dbgs());
+      dbgs() << "\n is " << (L ? "Def" : "Use") << "\n";
+    }
+  }
+  if (!checkBBLevelLivenessConflict(DestLivenessMap, SrcLivenessMap, Load,
+                                    Store)) {
+    dbgs() << "bail out because of conflict\n";
     return false;
-  // Bailout if Dest may have any ModRef before Store.
-  if (!ReachabilityWorklist.empty() &&
-      isPotentiallyReachableFromMany(ReachabilityWorklist, Store->getParent(),
-                                     nullptr, DT, nullptr))
-    return false;
+  }
 
-  // Check that, from after the Load to the end of the BB,
-  //   - if the dest has any Mod, src has no Ref, and
-  //   - if the dest has any Ref, src has no Mod except full-sized lifetimes.
-  MemoryLocation SrcLoc(SrcAlloca, LocationSize::precise(Size));
-
-  auto SrcModRefCallback = [&](Instruction *UI) -> bool {
-    // Any ModRef post-dominated by Load doesn't matter, also Load and Store
-    // themselves can be ignored.
-    if (PDT->dominates(Load, UI) || UI == Load || UI == Store)
-      return true;
-    ModRefInfo Res = BAA.getModRefInfo(UI, SrcLoc);
-    if ((isModSet(DestModRef) && isRefSet(Res)) ||
-        (isRefSet(DestModRef) && isModSet(Res)))
-      return false;
-
-    return true;
-  };
-
-  if (!CaptureTrackingWithModRef(SrcAlloca, SrcModRefCallback))
-    return false;
+  // remove no liveout def of dest,
+  // TOOD: but we need to care about post dominator
+  // for (auto &[BB, DestLiveness] : DestLivenessMap) {
+  //   if (DestLiveness.isLiveOut())
+  //     continue;
+  //   for (auto LI : DestLiveness.getBBUsesOrDefs()) {
+  //     if (LI.getInt() == Liveness::LiveDef)
+  //       eraseInstruction(LI.getPointer());
+  //   }
+  // }
 
   // We can do the transformation. First, align the allocas appropriately.
   SrcAlloca->setAlignment(
