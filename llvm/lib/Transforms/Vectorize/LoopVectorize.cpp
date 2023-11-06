@@ -1962,7 +1962,11 @@ public:
   GeneratedRTChecks(ScalarEvolution &SE, DominatorTree *DT, LoopInfo *LI,
                     TargetTransformInfo *TTI, const DataLayout &DL)
       : DT(DT), LI(LI), TTI(TTI), SCEVExp(SE, DL, "scev.check"),
-        MemCheckExp(SE, DL, "scev.check") {}
+        MemCheckExp(SE, DL, "scev.check") {
+    dbgs() << "at constructor SCEVExp:\n";
+    SE.print(dbgs());
+    dbgs() << "\n";
+  }
 
   /// Generate runtime checks in SCEVCheckBlock and MemCheckBlock, so we can
   /// accurately estimate the cost of the runtime checks. The blocks are
@@ -1976,6 +1980,8 @@ public:
     // runtime checks needs to be generated.
     // TODO: Skip cutoff if the loop is guaranteed to execute, e.g. due to
     // profile info.
+    dbgs() << "LAI.getNumRuntimePointerChecks() = "
+           << LAI.getNumRuntimePointerChecks() << '\n';
     CostTooHigh =
         LAI.getNumRuntimePointerChecks() > VectorizeMemoryCheckThreshold;
     if (CostTooHigh)
@@ -1983,21 +1989,45 @@ public:
 
     BasicBlock *LoopHeader = L->getHeader();
     BasicBlock *Preheader = L->getLoopPreheader();
+    dbgs() << "LoopHeader: \n";
+    LoopHeader->print(dbgs());
+    dbgs() << "\n";
+    dbgs() << "PreHeader: \n";
+    Preheader->print(dbgs());
+    dbgs() << "\n";
 
     // Use SplitBlock to create blocks for SCEV & memory runtime checks to
     // ensure the blocks are properly added to LoopInfo & DominatorTree. Those
     // may be used by SCEVExpander. The blocks will be un-linked from their
     // predecessors and removed from LI & DT at the end of the function.
+    // →要は,DTとLIの更新をしてるよって？
     if (!UnionPred.isAlwaysTrue()) {
+      dbgs() << "UnionPred: \n";
+      UnionPred.print(dbgs());
+      dbgs() << "\n";
+
+      dbgs() << "union pred is always true!\n";
       SCEVCheckBlock = SplitBlock(Preheader, Preheader->getTerminator(), DT, LI,
                                   nullptr, "vector.scevcheck");
+      dbgs() << "SCEVCheckBlock Splitted!: \n";
+      SCEVCheckBlock->print(dbgs());
+      dbgs() << "\n";
 
+      // ここで, exprをexpandしている！ and block is written on this.
       SCEVCheckCond = SCEVExp.expandCodeForPredicate(
           &UnionPred, SCEVCheckBlock->getTerminator());
+      dbgs() << "SCEVCheckCond(returned by SCEVExp.expandCodeForPredicate): \n";
+      SCEVCheckCond->print(dbgs());
+      dbgs() << "\n";
+
+      dbgs() << "SCEVCheckBlock expanded!: \n";
+      SCEVCheckBlock->print(dbgs());
+      dbgs() << "\n";
     }
 
     const auto &RtPtrChecking = *LAI.getRuntimePointerChecking();
     if (RtPtrChecking.Need) {
+      dbgs() << "runtime pointer checking needed?: \n";
       auto *Pred = SCEVCheckBlock ? SCEVCheckBlock : Preheader;
       MemCheckBlock = SplitBlock(Pred, Pred->getTerminator(), DT, LI, nullptr,
                                  "vector.memcheck");
@@ -2028,8 +2058,12 @@ public:
 
     // Unhook the temporary block with the checks, update various places
     // accordingly.
-    if (SCEVCheckBlock)
+    if (SCEVCheckBlock) {
+      dbgs() << "SCEVCheckBlock Replace!: \n";
+      SCEVCheckBlock->print(dbgs());
+      dbgs() << "\n";
       SCEVCheckBlock->replaceAllUsesWith(Preheader);
+    }
     if (MemCheckBlock)
       MemCheckBlock->replaceAllUsesWith(Preheader);
 
@@ -10070,6 +10104,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   GeneratedRTChecks Checks(*PSE.getSE(), DT, LI, TTI,
                            F->getParent()->getDataLayout());
   if (MaybeVF) {
+    dbgs() << "MaybeVF!\n";
     VF = *MaybeVF;
     // Select the interleave count.
     IC = CM.selectInterleaveCount(VF.Width, VF.Cost);
@@ -10077,6 +10112,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     unsigned SelectedIC = std::max(IC, UserIC);
     //  Optimistically generate runtime checks if they are needed. Drop them if
     //  they turn out to not be profitable.
+    // This PSE.getPredicate() is the culplit.
     if (VF.Width.isVector() || SelectedIC > 1)
       Checks.Create(L, *LVL.getLAI(), PSE.getPredicate(), VF.Width, SelectedIC);
 
