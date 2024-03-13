@@ -1469,7 +1469,7 @@ enum ModState {
 
 } // namespace
 // Represent the ModState change before and after the BB. We should only see
-// possible comobination for pairs of BasicBlcok and ModState on BB's entry.
+// possible combination for pairs of BasicBlock and ModState on BB's entry.
 using BasicBlockModSet = std::set<std::pair<BasicBlock *, ModState>>;
 
 // Performs dataflow analysis for an alloca at the basic block level as
@@ -1518,7 +1518,7 @@ bool CheckModRefConflict(BasicBlockInstModRefMap BBInstModRefMap,
       }
 
       // For the Store, we can see the mod state is renewed.TODO: more
-      // generally, full-sizeed  copy between src and dest would be this.
+      // generally, full-sized  copy between src and dest would be this.
       if (I == Store) {
         AfterMS = ModState::NoMod;
       } else if (IsDef(I, AllocaSize, DL)) { // if the instruction is Def, other one's mod is erased
@@ -1590,7 +1590,7 @@ bool MemCpyOptPass::performStackMoveOptzn(Instruction *Load, Instruction *Store,
   }
 
   // Check that src and dest are never captured, unescaped allocas. Also
-  // find the nearest common dominator and postdominator for all users in
+  // find the nearest common dominator and post-dominator for all users in
   // order to shrink wrap the lifetimes, and instructions with noalias metadata
   // to remove them.
 
