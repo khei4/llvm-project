@@ -6981,7 +6981,8 @@ TEST_F(FormatTest, PutEmptyBlocksIntoOneLine) {
   verifyFormat("enum E {};");
   verifyFormat("enum E {}");
   FormatStyle Style = getLLVMStyle();
-  Style.SpaceInEmptyBlock = true;
+  Style.SpaceInEmptyBraces = FormatStyle::SIEBO_Custom;
+  Style.SpaceInEmptyBracesOptions.Block = true;
   verifyFormat("void f() { }", "void f() {}", Style);
   Style.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
   verifyFormat("{ }", Style);
@@ -7009,7 +7010,8 @@ TEST_F(FormatTest, PutEmptyBlocksIntoOneLine) {
                Style);
 
   Style = getLLVMStyle(FormatStyle::LK_CSharp);
-  Style.SpaceInEmptyBlock = true;
+  Style.SpaceInEmptyBraces = FormatStyle::SIEBO_Custom;
+  Style.SpaceInEmptyBracesOptions.Block = true;
   verifyFormat("Event += () => { };", Style);
 }
 
@@ -14047,6 +14049,104 @@ TEST_F(FormatTest, LayoutCxx11BraceInitializers) {
   SpaceBetweenBraces.SpacesInParens = FormatStyle::SIPO_Custom;
   SpaceBetweenBraces.SpacesInParensOptions.InEmptyParentheses = true;
   verifyFormat("vector< int > x{ };", SpaceBetweenBraces);
+}
+
+TEST_F(FormatTest, EmptyBracesTest) {
+  FormatStyle SpaceInEmptyBraces = getLLVMStyle();
+  llvm::dbgs() << "EmptyBracesTest: Never test\n";
+  SpaceInEmptyBraces.SpaceInEmptyBraces = FormatStyle::SIEBO_Never;
+  SpaceInEmptyBraces.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  verifyFormat("void f() {}\n"
+               "struct Unit {};\n"
+               "union U2 {};\n"
+               "class U3 {};\n"
+               "enum U4 {};\n"
+               "int x{};\n"
+               "while (true) {}\n",
+               SpaceInEmptyBraces);
+
+  llvm::dbgs() << "EmptyBracesTest: Function test\n";
+  SpaceInEmptyBraces.SpaceInEmptyBraces = FormatStyle::SIEBO_Custom;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Function = true;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Record = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.InitList = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Block = false;
+  SpaceInEmptyBraces.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  verifyFormat("void f() { }\n"
+               "struct Unit {};\n"
+               "union U2 {};\n"
+               "class U3 {};\n"
+               "enum U4 {};\n"
+               "int x{};\n"
+               "while (true) {}\n",
+               SpaceInEmptyBraces);
+
+  llvm::dbgs() << "EmptyBracesTest: Record test\n";
+  SpaceInEmptyBraces.SpaceInEmptyBraces = FormatStyle::SIEBO_Custom;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Function = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Record = true;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.InitList = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Block = false;
+  SpaceInEmptyBraces.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  verifyFormat("void f() {}\n"
+               "struct Unit { };\n"
+               "union U2 { };\n"
+               "class U3 { };\n"
+               "enum U4 { };\n"
+               "int x{};\n"
+               "while (true) {}\n",
+               SpaceInEmptyBraces);
+
+  llvm::dbgs() << "EmptyBracesTest: InitList test\n";
+  SpaceInEmptyBraces.SpaceInEmptyBraces = FormatStyle::SIEBO_Custom;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Function = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Record = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.InitList = true;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Block = false;
+  SpaceInEmptyBraces.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  verifyFormat("void f() {}\n"
+               "struct Unit {};\n"
+               "union U2 {};\n"
+               "class U3 {};\n"
+               "enum U4 {};\n"
+               "int x{ };\n"
+               "while (true) {}\n",
+               SpaceInEmptyBraces);
+
+  llvm::dbgs() << "EmptyBracesTest: Block test\n";
+  // compatible with SpaceInEmptyBlock
+  SpaceInEmptyBraces.SpaceInEmptyBraces = FormatStyle::SIEBO_Custom;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Function = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Record = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.InitList = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Block = true;
+  SpaceInEmptyBraces.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  verifyFormat("void f() { }\n"
+               "struct Unit { };\n"
+               "union U2 { };\n"
+               "class U3 { };\n"
+               "enum U4 { };\n"
+               "int x{};\n"
+               "while (true) { }\n",
+               SpaceInEmptyBraces);
+
+  llvm::dbgs() << "EmptyBracesTest: Overwrite test\n";
+  // SpacesInParensOptions.InEmptyParentheses can be overwritten.
+  SpaceInEmptyBraces.SpaceInEmptyBraces = FormatStyle::SIEBO_Custom;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Function = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Record = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.InitList = false;
+  SpaceInEmptyBraces.SpaceInEmptyBracesOptions.Block = false;
+  SpaceInEmptyBraces.SpacesInParens = FormatStyle::SIPO_Custom;
+  SpaceInEmptyBraces.SpacesInParensOptions.InEmptyParentheses = true;
+  SpaceInEmptyBraces.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  verifyFormat("void f( ) {}\n"
+               "struct Unit {};\n"
+               "union U2 {};\n"
+               "enum U3 {};\n"
+               "int x{};\n"
+               "while (true) {}\n",
+               SpaceInEmptyBraces);
 }
 
 TEST_F(FormatTest, FormatsBracedListsInColumnLayout) {

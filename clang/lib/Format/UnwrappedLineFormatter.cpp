@@ -823,8 +823,19 @@ private:
 
       if (ShouldMerge()) {
         // We merge empty blocks even if the line exceeds the column limit.
+        bool braceRequireSpace = false;
+        if (Style.SpaceInEmptyBraces == FormatStyle::SIEBO_Custom) {
+          braceRequireSpace |=
+              Style.SpaceInEmptyBracesOptions.Record &&
+              Line.Last->isOneOf(TT_StructLBrace, TT_UnionLBrace,
+                                 TT_ClassLBrace);
+          braceRequireSpace |= Style.SpaceInEmptyBracesOptions.Function &&
+                               Line.Last->is(TT_FunctionLBrace);
+          braceRequireSpace |=
+              Style.SpaceInEmptyBracesOptions.Block && Line.Last->is(BK_Block);
+        }
         Tok->SpacesRequiredBefore =
-            (Style.SpaceInEmptyBlock || Line.Last->is(tok::comment)) ? 1 : 0;
+            (braceRequireSpace || Line.Last->is(tok::comment)) ? 1 : 0;
         Tok->CanBreakBefore = true;
         return 1;
       } else if (Limit != 0 && !Line.startsWithNamespace() &&

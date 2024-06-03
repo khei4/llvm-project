@@ -6036,12 +6036,93 @@ the configuration (without a prefix: ``Auto``).
 
 **SpaceInEmptyBlock** (``Boolean``) :versionbadge:`clang-format 10` :ref:`¶ <SpaceInEmptyBlock>`
   If ``true``, spaces will be inserted into ``{}``.
+  This option is **deprecated**. The previous behavior is preserved by using
+  ``SpaceInEmptyBraces`` with ``Custom`` and by setting Record
+  ``SpaceInEmptyBracesOptions`` to ``true``.
+
+.. _SpaceInEmptyBraces:
+
+**SpaceInEmptyBraces** (``SpaceInEmptyBracesStyle``) :versionbadge:`clang-format 19` :ref:`¶ <SpaceInEmptyBraces>`
+  Defines in which cases spaces will be inserted in empty braces.
+
+  Possible values:
+
+  * ``SIEBO_Never`` (in configuration: ``Never``)
+    Never put a space in empty braces.
+
+    .. code-block:: c++
+
+       T x{};
+       while (true) {}
+       struct Unit {};
+
+  * ``SIEBO_Custom`` (in configuration: ``Custom``)
+    Configure each individual space in empty braces in
+    `SpacesInEmptyBracesOptions`.
+
+
+
+.. _SpaceInEmptyBracesOptions:
+
+**SpaceInEmptyBracesOptions** (``SpaceInEmptyBracesCustom``) :versionbadge:`clang-format 19` :ref:`¶ <SpaceInEmptyBracesOptions>`
+  Control of individual spaces in empty braces.
+
+  If ``SpaceInEmptyBraces`` is set to ``Custom``, use this to specify
+  how each individual space in empty braces case should be handled.
+  Otherwise, this is ignored.
+
+  .. code-block:: yaml
+
+    # Example of usage:
+    SpaceInEmptyBraces: Custom
+    SpaceInEmptyBracesOptions:
+      Block: true
+      Record: true
+
+  Nested configuration flags:
+
+  Precise control over the spacing in empty braces.
 
   .. code-block:: c++
 
-     true:                                false:
-     void f() { }                   vs.   void f() {}
-     while (true) { }                     while (true) {}
+    # Should be declared this way:
+    SpaceInEmptyBraces: Custom
+    SpaceInEmptyBracesOptions:
+      Block: true
+      Record: true
+
+  * ``bool Function`` Put a space in empty braces of function definition.
+
+    .. code-block:: c++
+
+       true:                                  false:
+       int f() { }                    vs.     int f() {}
+       struct Unit {};                        struct Unit {};
+
+  * ``bool Record`` Put a space in empty braces of record definition.
+
+    .. code-block:: c++
+
+       true:                                  false:
+       enum Unit { };                 vs.     enum Unit {};
+       struct Unit { };                       struct Unit {};
+       union Unit { };                        union Unit {};
+
+  * ``bool InitList`` Put a space in empty braces of initializer list.
+
+    .. code-block:: c++
+
+       true:                                  false:
+       T x{ };                        vs.     T x{};
+
+  * ``bool Block`` Put a space in empty braces of code blocks and record declarations.
+
+    .. code-block:: c++
+
+       true:                                  false:
+       int f() { }                    vs.     int f() {}
+       struct Unit { };                       struct Unit {};
+
 
 .. _SpaceInEmptyParentheses:
 

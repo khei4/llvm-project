@@ -4337,12 +4337,25 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
     return Left.is(tok::hash);
   if (Left.isOneOf(tok::hashhash, tok::hash))
     return Right.is(tok::hash);
-  if (Left.is(BK_Block) && Right.is(tok::r_brace) &&
+  // TODO: initlist and enum and fixme
+  // other braces are handled in
+  if (Style.SpaceInEmptyBraces == FormatStyle::SIEBO_Custom &&
+      Left.is(tok::l_brace) && Right.is(tok::r_brace) &&
       Right.MatchingParen == &Left && Line.Children.empty()) {
-    return Style.SpaceInEmptyBlock;
+    if (Left.is(BK_BracedInit) && Right.is(BK_BracedInit)) {
+      return Style.SpaceInEmptyBracesOptions.InitList;
+    }
+    if (Left.is(TT_EnumLBrace) && Right.is(TT_EnumRBrace)) {
+      return Style.SpaceInEmptyBracesOptions.Record ||
+             Style.SpaceInEmptyBracesOptions.Block;
+    }
+    if (Left.is(BK_Block))
+      return Style.SpaceInEmptyBracesOptions.Block;
   }
   if ((Left.is(tok::l_paren) && Right.is(tok::r_paren)) ||
-      (Left.is(tok::l_brace) && Left.isNot(BK_Block) &&
+      ((Style.SpaceInEmptyBraces == FormatStyle::SIEBO_Never ||
+        Style.SpaceInEmptyBracesOptions.InitList) &&
+       Left.is(tok::l_brace) && Left.isNot(BK_Block) &&
        Right.is(tok::r_brace) && Right.isNot(BK_Block))) {
     return Style.SpacesInParensOptions.InEmptyParentheses;
   }
@@ -5371,6 +5384,7 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
     return false;
   if (Left.is(TT_RegexLiteral))
     return false;
+
   return spaceRequiredBetween(Line, Left, Right);
 }
 
