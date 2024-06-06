@@ -679,6 +679,11 @@ size_t UnwrappedLineParser::computePPHash() const {
 // running the token annotator on it so that we can restore them afterward.
 bool UnwrappedLineParser::mightFitOnOneLine(
     UnwrappedLine &ParsedLine, const FormatToken *OpeningBrace) const {
+  if (OpeningBrace)
+    llvm::dbgs() << "Hi I'm mightFitOnOneLine!\n"
+                 << "OpeningBrace->is(TT_ControlStatementLBrace): "
+                 << OpeningBrace->is(TT_ControlStatementLBrace) << '\n';
+
   const auto ColumnLimit = Style.ColumnLimit;
   if (ColumnLimit == 0)
     return true;
@@ -717,6 +722,8 @@ bool UnwrappedLineParser::mightFitOnOneLine(
     Length -= OpeningBrace->TokenText.size() + 1;
   }
 
+  llvm::dbgs() << "Line.First->is(tok::r_brace): "
+               << Line.First->is(tok::r_brace) << '\n';
   if (const auto *FirstToken = Line.First; FirstToken->is(tok::r_brace)) {
     assert(!OpeningBrace || OpeningBrace->is(TT_ControlStatementLBrace));
     Length -= FirstToken->TokenText.size() + 1;
@@ -830,6 +837,7 @@ FormatToken *UnwrappedLineParser::parseBlock(bool MustBeDeclaration,
       FormatTok->is(tok::r_brace) && Tok->is(TT_FunctionLBrace);
 
   auto RemoveBraces = [=]() mutable {
+    llvm::dbgs() << "Hi I'm RemoveBraces\n";
     if (!SimpleBlock)
       return false;
     assert(Tok->isOneOf(TT_ControlStatementLBrace, TT_ElseLBrace));
@@ -860,6 +868,7 @@ FormatToken *UnwrappedLineParser::parseBlock(bool MustBeDeclaration,
     return mightFitOnOneLine((*CurrentLines)[Index], Tok);
   };
   if (RemoveBraces()) {
+    llvm::dbgs() << "RemoveBraces returns true!\n";
     Tok->MatchingParen = FormatTok;
     FormatTok->MatchingParen = Tok;
   }

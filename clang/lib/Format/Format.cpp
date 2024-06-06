@@ -2222,6 +2222,7 @@ public:
 private:
   void removeBraces(SmallVectorImpl<AnnotatedLine *> &Lines,
                     tooling::Replacements &Result) {
+    llvm::dbgs() << "Hi I'm removeBraces on Format.cpp\n";
     const auto &SourceMgr = Env.getSourceManager();
     const auto End = Lines.end();
     for (auto I = Lines.begin(); I != End; ++I) {
@@ -3682,6 +3683,7 @@ reformat(const FormatStyle &Style, StringRef Code,
     }
 
     if (Style.RemoveBracesLLVM) {
+      llvm::dbgs() << "Hi I'm reformat\n";
       FormatStyle S = Expanded;
       S.RemoveBracesLLVM = true;
       Passes.emplace_back([&, S = std::move(S)](const Environment &Env) {
